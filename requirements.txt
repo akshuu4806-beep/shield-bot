@@ -1,0 +1,8 @@
+python-telegram-bot==20.8
+pymongo[srv]
+pytz
+pillow
+transformers
+torch --index-url https://download.pytorch.org/whl/cpu
+flask
+gunicorn
