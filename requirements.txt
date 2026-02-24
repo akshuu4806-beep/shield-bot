@@ -1,7 +1,7 @@
+requests
 python-telegram-bot==20.8
 pymongo[srv]
 pytz
 pillow
-requests
 flask
 gunicorn
