@@ -1154,7 +1154,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await file.download_to_drive(temp_file_path)
             # ... (rest of the NSFW logic stays exactly the same)
             # Call AI Scanner (Hugging Face)
-            is_explicit = await check_image_nsfw_hf(temp_file_path) 
+            is_explicit = await check_image_nsfw_api(temp_file_path)
             
             # Remove temp file immediately
             if os.path.exists(temp_file_path):
