@@ -9,7 +9,6 @@ from flask import Flask
 from threading import Thread
 from datetime import datetime, timedelta
 from PIL import Image
-from transformers import pipeline
 import requests # Sabse upar imports mein 'import requests' add karein
 
 from telegram import (
