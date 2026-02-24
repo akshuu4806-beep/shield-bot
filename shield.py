@@ -10,6 +10,7 @@ from threading import Thread
 from datetime import datetime, timedelta
 from PIL import Image
 from transformers import pipeline
+import requests # Sabse upar imports mein 'import requests' add karein
 
 from telegram import (
     Update, 
@@ -52,7 +53,9 @@ MONGO_URL = os.environ.get("MONGO_URL")
 ADMIN_IDS = [8507307665]
 IST = pytz.timezone('Asia/Kolkata')
 # NSFW Classifier
-nsfw_classifier = pipeline("image-classification", model="Falconsai/nsfw_image_detection")
+# Purana nsfw_classifier = pipeline(...) hata kar ye likhein:
+HF_TOKEN = os.environ.get("HF_TOKEN")
+NSFW_API_URL = "https://api-inference.huggingface.co/models/Falconsai/nsfw_image_detection"
 
 # ========== DATABASE CLASS ==========
 class PersistentDB:
@@ -921,24 +924,35 @@ async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     db.set_anti_channel(update.effective_chat.id, state)
     await update.message.reply_text(f"🚫 <b>Anti-Channel</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
-async def check_image_nsfw_hf(file_path: str) -> bool:
-    """Runs Hugging Face model locally to check if an image is NSFW."""
-    try:
-        def scan_image():
-            img = Image.open(file_path)
-            # The model returns a list like: [{'label': 'nsfw', 'score': 0.98}, {'label': 'normal', 'score': 0.02}]
-            return nsfw_classifier(img)
-
-        # Run the heavy ML task in a separate thread to prevent bot lag
-        results = await asyncio.to_thread(scan_image)
+async def check_image_nsfw_api(file_path: str) -> bool:
+    """Hugging Face Inference API ka use karke NSFW check karein (0% RAM Usage)"""
+    if not HF_TOKEN:
+        logger.error("HF_TOKEN is missing!")
+        return False
         
-        # Check the score of the 'nsfw' label
-        for result in results:
-            if result['label'] == 'nsfw' and result['score'] > 0.60: # 60% confidence threshold
-                return True
+    try:
+        with open(file_path, "rb") as f:
+            image_data = f.read()
+        
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        
+        # API call in a thread to prevent blocking
+        def call_api():
+            response = requests.post(NSFW_API_URL, headers=headers, data=image_data, timeout=10)
+            return response.json()
+            
+        results = await asyncio.to_thread(call_api)
+        
+        # Result format: [{'label': 'nsfw', 'score': 0.98}, ...]
+        if isinstance(results, list):
+            for result in results:
+                if result.get('label') == 'nsfw' and result.get('score', 0) > 0.60:
+                    return True
+        elif 'error' in results:
+            logger.error(f"HF API Error: {results['error']}")
                 
     except Exception as e:
-        logger.error(f"Hugging Face NSFW Error: {e}")
+        logger.error(f"NSFW API Exception: {e}")
         
     return False
 
