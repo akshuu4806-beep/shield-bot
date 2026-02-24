@@ -45,12 +45,12 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# ========== CONFIGURATION ==========
-TOKEN = "8532733538:AAFNNf_GL7GleFXWRxy2lUIMejKySA9wdlY"
-ADMIN_IDS = [8531690745]
+# ========== CONFIGURATION (SAFE VERSION) ==========
+# Ab ye values Render ke Environment Variables se aayengi
+TOKEN = os.environ.get("TOKEN")
+MONGO_URL = os.environ.get("MONGO_URL")
+ADMIN_IDS = [8507307665]
 IST = pytz.timezone('Asia/Kolkata')
-MONGO_URL = "mongodb+srv://admin:Rishi9708697440@cluster0.pfafhkp.mongodb.net/?appName=Cluster0"
-
 # NSFW Classifier
 nsfw_classifier = pipeline("image-classification", model="Falconsai/nsfw_image_detection")
 
