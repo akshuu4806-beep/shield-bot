@@ -54,7 +54,7 @@ IST = pytz.timezone('Asia/Kolkata')
 # NSFW Classifier
 # Purana nsfw_classifier = pipeline(...) hata kar ye likhein:
 HF_TOKEN = os.environ.get("HF_TOKEN")
-NSFW_API_URL = "https://api-inference.huggingface.co/models/nateraw/vit-base-patch16-224-nsfw"
+NSFW_API_URL = "https://api-inference.huggingface.co/models/AdamCodd/vit-base-nsfw-detector"
 
 # ========== DATABASE CLASS ==========
 class PersistentDB:
@@ -948,7 +948,7 @@ async def check_image_nsfw_api(file_path: str) -> bool:
             try:
                 results = response.json()
             except Exception:
-                logger.error(f"Failed to parse JSON. HTTP {response.status_code}. Raw: {response.text}")
+                logger.error(f"Failed to parse JSON. HTTP {response.status_code} for URL: {NSFW_API_URL}. Raw: {response.text}")
                 return False
                 
             # Agar model sleep mode mein hai (Loading error)
