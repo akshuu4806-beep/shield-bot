@@ -924,7 +924,7 @@ async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🚫 <b>Anti-Channel</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
 async def check_image_nsfw_api(file_path: str) -> bool:
-    """Hugging Face Inference API ka use karke NSFW check karein (0% RAM Usage)"""
+    """Hugging Face API with Auto-Retry for Sleeping Models"""
     if not HF_TOKEN:
         logger.error("HF_TOKEN is missing!")
         return False
@@ -935,26 +935,58 @@ async def check_image_nsfw_api(file_path: str) -> bool:
         
         headers = {"Authorization": f"Bearer {HF_TOKEN}"}
         
-        # API call in a thread to prevent blocking
+        # Simple API call function (Sirf request bhejega)
         def call_api():
-            response = requests.post(NSFW_API_URL, headers=headers, data=image_data, timeout=10)
-            return response.json()
+            return requests.post(NSFW_API_URL, headers=headers, data=image_data, timeout=20)
             
-        results = await asyncio.to_thread(call_api)
+        max_retries = 3  # Bot maximum 3 baar try karega
         
-        # Result format: [{'label': 'nsfw', 'score': 0.98}, ...]
-        if isinstance(results, list):
-            for result in results:
-                if result.get('label') == 'nsfw' and result.get('score', 0) > 0.60:
-                    return True
-        elif 'error' in results:
-            logger.error(f"HF API Error: {results['error']}")
+        for attempt in range(max_retries):
+            # API ko background thread mein call karein
+            response = await asyncio.to_thread(call_api)
+            
+            try:
+                results = response.json()
+            except Exception:
+                logger.error(f"Failed to parse JSON. HTTP {response.status_code}. Raw: {response.text}")
+                return False
                 
+            # Agar model sleep mode mein hai (Loading error)
+            if isinstance(results, dict) and 'error' in results:
+                error_msg = results['error'].lower()
+                
+                # Check agar error loading ki wajah se hai
+                if 'is currently loading' in error_msg or 'estimated_time' in results:
+                    # API khud batati hai kitna wait karna hai (default 10s rakh lete hain)
+                    wait_time = results.get('estimated_time', 10.0)
+                    
+                    # Maximum 15 seconds wait karenge, taaki bot hang na ho
+                    wait_time = min(wait_time, 15.0) 
+                    
+                    logger.info(f"HF Model sleep me hai. {wait_time}s wait kar raha hu... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue  # Loop wapas upar jayega aur firse try karega
+                else:
+                    # Agar koi aur error hai (jaise Token invalid hona)
+                    logger.error(f"HF API Error: {results['error']}")
+                    return False
+            
+            # Agar successful response aaya (List format me)
+            if isinstance(results, list):
+                for result in results:
+                    # Agar label 'nsfw' hai aur confidence 60% se zyada hai
+                    if result.get('label') == 'nsfw' and result.get('score', 0) > 0.60:
+                        return True
+                return False # Image clean hai
+                
+        logger.error("Model load hone me time lag gaya. Skipping NSFW check for this image.")
+        return False
+
     except Exception as e:
         logger.error(f"NSFW API Exception: {e}")
         
     return False
-
+    
 async def greply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Replies to a specific message in a group."""
     if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id):
