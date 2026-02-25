@@ -27,7 +27,9 @@ from telegram.ext import (
     CallbackQueryHandler,
     ChatMemberHandler,
     filters,
-    ContextTypes
+    ContextTypes,
+    TypeHandler,             # ADD THIS
+    ApplicationHandlerStop   # ADD THIS
 )
 
 # ========== RENDER KEEP-ALIVE (FLASK) ==========
@@ -1391,10 +1393,43 @@ async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.add_group(chat.id, chat.title)
         logger.info(f"Bot added to group: {chat.title} ({chat.id})")
 
+# ========== ADMIN CHECK MIDDLEWARE ==========
+async def enforce_bot_admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stops the bot from working if it is not an admin, except for allowed commands."""
+    
+    # 1. Only apply this rule in groups (DMs are ignored by this check)
+    if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
+        return
+
+    # 2. Allow button clicks to pass so /start and /help interactive menus still work
+    if update.callback_query:
+        return
+
+    # 3. Allow specific commands (/start, /help, /status)
+    if update.message and update.message.text:
+        command = update.message.text.split()[0].split('@')[0].lower()
+        if command in ['/start', '/help', '/status']:
+            return
+
+    # 4. Check if the bot itself is an admin in the group
+    try:
+        bot_member = await context.bot.get_chat_member(update.effective_chat.id, context.bot.id)
+        if bot_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+            return # Bot is admin, allow normal operations
+    except Exception:
+        pass # If we can't fetch the member, assume it's not an admin
+
+    # 5. If we reach here, bot is NOT an admin and it's NOT an allowed command.
+    # Stop all further processing silently.
+    raise ApplicationHandlerStop()
+
 # ========== MAIN EXECUTION ==========
 def main():
     # Application builder
     app_bot = Application.builder().token(TOKEN).connect_timeout(60).read_timeout(60).write_timeout(60).pool_timeout(60).build()
+
+    # 👇 ADD THIS LINE RIGHT HERE (group=-1 makes it run before everything else)
+    app_bot.add_handler(TypeHandler(Update, enforce_bot_admin_status), group=-1)
     
     # ✅ FIX: All handlers now use app_bot instead of app
     app_bot.add_handler(CommandHandler("start", start_command))
