@@ -54,7 +54,7 @@ IST = pytz.timezone('Asia/Kolkata')
 # NSFW Classifier
 # Purana nsfw_classifier = pipeline(...) hata kar ye likhein:
 HF_TOKEN = os.environ.get("HF_TOKEN")
-NSFW_API_URL = "https://api-inference.huggingface.co/models/Falconsai/nsfw_image_detection"
+NSFW_API_URL = "https://api-inference.huggingface.co/models/nateraw/vit-base-patch16-224-nsfw"
 
 # ========== DATABASE CLASS ==========
 class PersistentDB:
@@ -967,9 +967,10 @@ async def check_image_nsfw_api(file_path: str) -> bool:
                     await asyncio.sleep(wait_time)
                     continue  # Loop wapas upar jayega aur firse try karega
                 else:
-                    # Agar koi aur error hai (jaise Token invalid hona)
-                    logger.error(f"HF API Error: {results['error']}")
-                    return False
+                    # Har model ke labels alag hote hain, toh sabko cover kar lete hain
+                    nsfw_labels = ['nsfw', 'porn', 'hentai', 'sexy']
+                    if result.get('label', '').lower() in nsfw_labels and result.get('score', 0) > 0.60:
+                        return True
             
             # Agar successful response aaya (List format me)
             if isinstance(results, list):
