@@ -1376,6 +1376,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
 
 # ========== BOT STATUS TRACKER ==========
+# ========== BOT STATUS TRACKER ==========
 async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Automatically updates the database when the bot is added or kicked from a group."""
     result = update.my_chat_member
@@ -1383,6 +1384,9 @@ async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     chat = result.chat
     new_status = result.new_chat_member.status
+
+    # 👇 ADD THIS LINE to keep the admin cache perfectly updated
+    context.chat_data['is_bot_admin'] = (new_status == ChatMemberStatus.ADMINISTRATOR)
 
     if new_status in [ChatMemberStatus.LEFT, ChatMemberStatus.KICKED, ChatMemberStatus.BANNED]:
         # Agar bot ko group se nikala gaya
@@ -1392,44 +1396,46 @@ async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Agar bot naye group me add hua
         db.add_group(chat.id, chat.title)
         logger.info(f"Bot added to group: {chat.title} ({chat.id})")
-
+        
 # ========== ADMIN CHECK MIDDLEWARE ==========
 async def enforce_bot_admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stops the bot from working if it is not an admin, except for allowed commands."""
     
-    # 1. Only apply this rule in groups (DMs are ignored by this check)
     if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
         return
 
-    # 2. Allow button clicks to pass so /start and /help interactive menus still work
-    if update.callback_query:
-        return
-
-    # 3. Allow specific commands (/start, /help, /status)
+    # 1. Allow specific commands to pass (/start, /help, /status)
     if update.message and update.message.text:
         command = update.message.text.split()[0].split('@')[0].lower()
         if command in ['/start', '/help', '/status']:
             return
 
-    # 4. Check if the bot itself is an admin in the group
-    try:
-        bot_member = await context.bot.get_chat_member(update.effective_chat.id, context.bot.id)
-        if bot_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-            return # Bot is admin, allow normal operations
-    except Exception:
-        pass # If we can't fetch the member, assume it's not an admin
+    # 2. Check admin status (using memory cache to avoid Telegram API rate limits)
+    chat_id = update.effective_chat.id
+    is_admin = context.chat_data.get('is_bot_admin')
 
-    # 5. If we reach here, bot is NOT an admin and it's NOT an allowed command.
-    # Stop all further processing silently.
+    # If we don't know the status yet, check the API ONCE and save it
+    if is_admin is None:
+        try:
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            is_admin = bot_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+            context.chat_data['is_bot_admin'] = is_admin
+        except Exception:
+            is_admin = False
+
+    if is_admin:
+        return # Bot is admin, allow normal operations
+
+    # 3. If NOT admin, silently stop processing THIS message
     raise ApplicationHandlerStop()
-
+    
 # ========== MAIN EXECUTION ==========
 def main():
     # Application builder
     app_bot = Application.builder().token(TOKEN).connect_timeout(60).read_timeout(60).write_timeout(60).pool_timeout(60).build()
 
     # 👇 ADD THIS LINE RIGHT HERE (group=-1 makes it run before everything else)
-    app_bot.add_handler(TypeHandler(Update, enforce_bot_admin_status), group=-1)
+    app_bot.add_handler(MessageHandler(filters.ALL, enforce_bot_admin_status), group=-1)
     
     # ✅ FIX: All handlers now use app_bot instead of app
     app_bot.add_handler(CommandHandler("start", start_command))
