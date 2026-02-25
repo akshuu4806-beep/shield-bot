@@ -54,7 +54,7 @@ IST = pytz.timezone('Asia/Kolkata')
 # NSFW Classifier
 # Purana nsfw_classifier = pipeline(...) hata kar ye likhein:
 HF_TOKEN = os.environ.get("HF_TOKEN")
-NSFW_API_URL = "https://api-inference.huggingface.co/models/AdamCodd/vit-base-nsfw-detector"
+NSFW_API_URL = "https://api-inference.huggingface.co/models/Falconsai/nsfw_image_detection"
 
 # ========== DATABASE CLASS ==========
 class PersistentDB:
