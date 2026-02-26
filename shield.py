@@ -341,7 +341,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             group_text = (
                 "💡 **Help Menu**\n\n"
-                "Hi please click the button below to get the help menu in your DMs.."
+                "Hi, please click the button below to get the help menu in your DMs.."
             )
             keyboard = [
                 [InlineKeyboardButton("💬 Open DM", url=dm_url)],
@@ -522,7 +522,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     group_text = (
         "💡 **Help Menu**\n\n"
-        "To keep the group chat clean, please check my commands in Private Message."
+        "Hi, please click the button below to get the help menu in your DMs."
     )
     
     # Creates the Open DM button, and a manual Delete button
@@ -569,10 +569,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"👁️ <b>Total Scanned:</b> <code>{scanned}</code>\n"
         f"☣️ <b>Bio Link Caught:</b> <code>{bio_caught}</code>\n"
-        f"🗑 <b>Media Deleted:</b> <code>{media_del}</code>\n"
+        f"🗑  <b>Media Deleted:</b> <code>{media_del}</code>\n"
         f"⚠️ <b>Warnings Issued:</b> <code>{warns_issued}</code>\n"
         f"🔞 <b>NSFW Blocked:</b> <code>{nsfw_blocked}</code>\n"
-        f"🏘 <b>Monitored Groups:</b> <code>{group_count}</code>\n"
+        f"🏘  <b>Monitored Groups:</b> <code>{group_count}</code>\n"
         f"⏳ <b>Uptime:</b> <code>{uptime_str}</code>\n"
     )
     
