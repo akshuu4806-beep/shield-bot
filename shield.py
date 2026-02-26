@@ -311,28 +311,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ==========================================
     # 🟢 OPEN BUTTONS (EVERYONE CAN USE THESE)
     # ==========================================
-    if query.data == "help_main":
-        help_text = (
-            "🤖 **BOT COMMANDS MENU**\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "👤 **USER COMMANDS**\n"
-            "• `/start` : Check bot status\n"
-            "• `/status` : Check security stats\n"
-            "• `/help` : Show this menu\n\n"
-            "🛠 **ADMIN COMMANDS**\n"
-             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• `/antichannel on/off` : Stop channel posts\n"
-            "• `/settings <warn> <hrs>` : Warn/Mute limits\n"
-            "• `/delay <min>` : Media auto-delete\n"
-            "• `/approve` : Whitelist a user\n"
-            "• `/unapprove` : Remove from whitelist\n"
-            "• `/aplist` : List whitelist users\n"
-        )
-        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
-        await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+   if query.data == "help_main":
+        is_private = update.effective_chat.type == 'private'
+
+        if is_private:
+            # Agar user DM me hai, toh normal help menu dikhao
+            help_text = (
+                "🤖 **BOT COMMANDS MENU**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "👤 **USER COMMANDS**\n"
+                "• `/start` : Check bot status\n"
+                "• `/status` : Check security stats\n"
+                "• `/help` : Show this menu\n\n"
+                "🛠 **ADMIN COMMANDS**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "• `/antichannel on/off` : Stop channel posts\n"
+                "• `/settings <warn> <hrs>` : Warn/Mute limits\n"
+                "• `/delay <min>` : Media auto-delete\n"
+                "• `/approve` : Whitelist a user\n"
+                "• `/unapprove` : Remove from whitelist\n"
+                "• `/aplist` : List whitelist users\n"
+            )
+            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
+            await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            # Agar user group me hai, toh Open DM ka option dikhao bina auto-delete ke
+            bot_info = await context.bot.get_me()
+            dm_url = f"https://t.me/{bot_info.username}?start=help"
+            
+            group_text = (
+                "💡 **Help Menu**\n\n"
+                "To keep the group chat clean, please check my commands in Private Message."
+            )
+            keyboard = [
+                [InlineKeyboardButton("💬 Open DM", url=dm_url)],
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_to_start"), InlineKeyboardButton("🗑 Close", callback_data="delete_msg")]
+            ]
+            # Ye sirf message ka text change karega, auto-delete trigger nahi karega
+            await query.edit_message_text(group_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            
         await query.answer()
         return
-
+       
     elif query.data == "back_to_start":
         await start_command(update, context)
         await query.answer()
@@ -428,16 +448,22 @@ async def auto_reset_on_unmute(update: Update, context: ContextTypes.DEFAULT_TYP
 # ========== COMMANDS ==========
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 1. SAFELY Check if the user clicked the deep link from the group
+    # We check 'update.message' first so it doesn't crash when clicked via inline button
+    if update.message and context.args and context.args[0] == "help":
+        await help_command(update, context)
+        return
+
     bot_user = await context.bot.get_me()
     chat = update.effective_chat
     
-    # 1. Database Logging (Keep this separate to track DMs vs Groups correctly)
+    # 2. Database Logging
     if chat.type == 'private':
         db.add_user(update.effective_user.id) 
     else:
         db.add_group(chat.id, chat.title)
 
-    # 2. Universal Message & Keyboard (Applies to both DMs and Groups)
+    # 3. Universal Message & Keyboard
     CHANNEL_URL = "https://t.me/+rjE5xZlIK4U3ODA1"
     text = (
         f"👋 **𝗪𝗲𝗹𝗰𝗼𝗺𝗲 𝘁𝗼 {bot_user.first_name}!**\n\n"
@@ -457,33 +483,63 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # 3. Send the Output
+    # 4. Send or Edit the Output
     if update.callback_query:
+        # If triggered by "⬅️ Back" button, edit the current message
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
+        # If triggered by typing /start, send a new message
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-
+        
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 **BOT COMMANDS MENU**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "👤 **USER COMMANDS**\n"
-        "• /start : Check bot status\n"
-        "• /status : Check security stats\n"
-        "• /help : Show this menu\n\n"
+        "• `/start` : Check bot status\n"
+        "• `/status` : Check security stats\n"
+        "• `/help` : Show this menu\n\n"
         "🛠 **ADMIN COMMANDS**\n"
-         "━━━━━━━━━━━━━━━━━━━━\n"
-        "• /antichannel on/off : Stop channel posts\n"
-        "• /settings <warn> <hrs> : Warn/Mute limits\n"
-        "• /delay <min> : Media auto-delete\n"
-        "• /approve : Whitelist a user\n"
-        "• /unapprove : Remove from whitelist\n"
-        "• /aplist : List whitelist users\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "• `/antichannel on/off` : Stop channel posts\n"
+        "• `/settings <warn> <hrs>` : Warn/Mute limits\n"
+        "• `/delay <min>` : Media auto-delete\n"
+        "• `/approve` : Whitelist a user\n"
+        "• `/unapprove` : Remove from whitelist\n"
+        "• `/aplist` : List whitelist users\n"
     )
-    await update.message.reply_text(help_text, parse_mode='Markdown')
 
+    chat_type = update.effective_chat.type
+
+    # If the user uses /help directly in the bot's DM
+    if chat_type == 'private':
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+        return
+
+    # If the user uses /help in a group
+    bot_info = await context.bot.get_me()
+    dm_url = f"https://t.me/{bot_info.username}?start=help"
+    
+    group_text = (
+        "💡 **Help Menu**\n\n"
+        "To keep the group chat clean, please check my commands in Private Message."
+    )
+    
+    # Creates the Open DM button, and a manual Delete button
+    keyboard = [
+        [InlineKeyboardButton("💬 Open DM", url=dm_url)],
+        [InlineKeyboardButton("🗑 Close", callback_data="delete_msg")]
+    ]
+    
+    # Sends the message in the group permanently (no auto-delete)
+    await update.message.reply_text(
+        group_text, 
+        reply_markup=InlineKeyboardMarkup(keyboard), 
+        parse_mode='Markdown'
+    )
+        
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Fetch the bot's name (Fixes NameError)
+    # 1. Fetch the bot's name
     bot_info = await context.bot.get_me()
     bot_name = bot_info.first_name
 
@@ -495,15 +551,18 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     groups = db.get_groups()
     group_count = len(groups) if groups else 0
     
-    # 4. Permanent Uptime Calculation
+    # 4. Permanent Uptime Calculation (Hours, Minutes, Seconds only)
     bot_start_time = datetime.fromtimestamp(start_timestamp, IST)
     uptime_delta = datetime.now(IST) - bot_start_time
-    days = uptime_delta.days
-    hours, remainder = divmod(uptime_delta.seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
     
-    # 5. Build the text using HTML (Very stable for Telegram)
+    # Use total_seconds() so days are automatically added into the total hours calculation
+    total_seconds = int(uptime_delta.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+    
+    # 5. Build the text using HTML
     text = (
         f"<b>{bot_name}</b>\n\n"
         "📊 <b>SYSTEM STATS</b>\n"
@@ -521,7 +580,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
-
+    
 async def set_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
@@ -535,22 +594,54 @@ async def set_settings_command(update: Update, context: ContextTypes.DEFAULT_TYP
     context.job_queue.run_once(delete_msg_job, 30, chat_id=update.effective_chat.id, data=sent_msg.message_id)
 
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Admin Permission Check
     if not await is_user_admin(update, context): 
-        await update.message.reply_text("❌ You have not permission.")
+        await update.message.reply_text(
+            "❌ <b>Permission Denied!</b>\nOnly admins can change the media delay settings.", 
+            parse_mode='HTML'
+        )
         return
+
     chat_id = update.effective_chat.id
+
     if context.args:
         try:
             mins = int(context.args[0])
+            if mins < 0:
+                raise ValueError("Negative time not allowed")
+                
+            # Update Database
             db.set_delay(chat_id, mins)
-            sent_msg = await update.message.reply_text(f"✅ Media delete set to {mins}m.")
-        except: 
-            sent_msg = await update.message.reply_text("Usage: `/delay <minutes>`")
+            
+            # Attractive Success Message
+            success_text = (
+                f"✅ <b>MEDIA CLEANER UPDATED</b>\n\n"
+                f"⏱️ <b>New Delay:</b> <code>{mins} Minutes</code>\n\n"
+                f"🗑️ <i>Now deleted all new media will be automatically</i>"
+            )
+            sent_msg = await update.message.reply_text(success_text, parse_mode='HTML')
+            
+        except ValueError:
+            # Attractive Error/Usage Message
+            error_text = (
+                f"❗ <b>Invalid Format!</b> Please use numbers only.\n\n"
+                f"💡 <b>Usage:</b>\n<code>/delay <minutes></code>\n"
+                f"<i>Example: <code>/delay 5</code> (Auto-deletes media after 5 mins)</i>"
+            )
+            sent_msg = await update.message.reply_text(error_text, parse_mode='HTML')
     else:
+        # Attractive Current Status Message (When no arguments are passed)
         current_delay = db.get_settings(chat_id)[0]
-        sent_msg = await update.message.reply_text(f"Current Delay: {current_delay}m")
-    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=sent_msg.message_id)
+        status_text = (
+            f"⏱️ <b>Current Media Delay:</b> <code>{current_delay} Minutes</code>\n\n"
+            f"<i>Media files are currently being auto-deleted after {current_delay} minutes.</i>\n\n"
+            f"💡 <b>To change this, use:</b>\n<code>/delay <minutes></code>"
+        )
+        sent_msg = await update.message.reply_text(status_text, parse_mode='HTML')
 
+    # Auto-delete the bot's response after 30 seconds to keep the group clean
+    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=sent_msg.message_id)
+    
 async def aplist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
@@ -1398,40 +1489,44 @@ async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Bot added to group: {chat.title} ({chat.id})")
         
 # ========== ADMIN CHECK MIDDLEWARE ==========
+# ========== ADMIN CHECK MIDDLEWARE ==========
 async def enforce_bot_admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # 1. Sirf groups aur supergroups ke liye rule apply hoga
+        # 1. Apply rule ONLY for groups and supergroups (DMs work normally)
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             return
 
-        # 2. Allow basic commands (/start, /help, /status) chahe text ho ya caption
-        if update.message:
-            text = update.message.text or update.message.caption
-            if text:
-                text_lower = text.lower()
-                if text_lower.startswith('/start') or text_lower.startswith('/help') or text_lower.startswith('/status'):
-                    return
-
-        # 3. Allow button clicks (taaki help menus work karein)
-        if update.callback_query:
+        # 2. ALWAYS process 'my_chat_member' updates so the bot knows when it is promoted/demoted
+        if update.my_chat_member:
             return
 
-        # 4. Live Admin Check (No cache bugs!)
         chat_id = update.effective_chat.id
-        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-        
-        if bot_member.status in ['administrator', 'creator']:
-            return # ✅ Bot is Admin! Message ko aage process hone do
 
-        # ❌ Bot is NOT Admin. Block all further commands/messages silently.
+        # 3. Check cached admin status to avoid Telegram API Rate Limits
+        is_admin = context.chat_data.get('is_bot_admin')
+
+        # 4. If cache is empty (e.g., bot just restarted), do one API call and save it
+        if is_admin is None:
+            try:
+                bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+                is_admin = bot_member.status in ['administrator', 'creator']
+                context.chat_data['is_bot_admin'] = is_admin
+            except Exception:
+                is_admin = False  # Assume not admin if there's an API error
+
+        # 5. If bot is an admin, exit middleware and allow normal processing
+        if is_admin:
+            return
+
+        # 6. ❌ Bot is NOT an admin. Block ALL commands, messages, and buttons silently.
         raise ApplicationHandlerStop()
 
     except ApplicationHandlerStop:
-        raise # Ye error raise karna zaroori hai bot ko chup karane ke liye
+        raise  # This tells the Python-Telegram-Bot application to halt the update completely
     except Exception as e:
-        # 🔥 MAIN FIX: Agar api me koi error aaye, toh bot ko block MAT karo!
         print(f"Admin Check Error: {e}")
-        return
+        # If any unexpected error occurs, stay silent to prevent spam
+        raise ApplicationHandlerStop()
     
 # ========== MAIN EXECUTION ==========
 def main():
