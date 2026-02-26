@@ -63,7 +63,7 @@ class PersistentDB:
     def __init__(self):
         self.client = pymongo.MongoClient(MONGO_URL)
         self.db = self.client["shield_bot_db"]
-        self.group_settings = self.db["group_settings"]
+        self.group_config = self.db["group_config"]
         self.allowlist = self.db["allowlist"]
         self.warnings = self.db["warnings"]
         self.users = self.db["users"]
@@ -90,22 +90,22 @@ class PersistentDB:
                 stats.get("warnings_issued", 0), stats.get("nsfw_blocked", 0), 
                 stats.get("bot_start_time", datetime.now(IST).timestamp()))
 
-    def get_settings(self, chat_id):
-        s = self.group_settings.find_one({"_id": chat_id})
+    def get_config(self, chat_id):
+        s = self.group_config.find_one({"_id": chat_id})
         return (s.get("delay_minutes", 1), s.get("warn_limit", 3), s.get("mute_hours", 1), 
                 s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1)) if s else (1, 3, 1, 0, 1, 1)
 
     def set_delay(self, chat_id, minutes):
-        self.group_settings.update_one({"_id": chat_id}, {"$set": {"delay_minutes": minutes}}, upsert=True)
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"delay_minutes": minutes}}, upsert=True)
 
     def set_limits(self, chat_id, warn_limit, mute_hours):
-        self.group_settings.update_one({"_id": chat_id}, {"$set": {"warn_limit": warn_limit, "mute_hours": mute_hours}}, upsert=True)
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"warn_limit": warn_limit, "mute_hours": mute_hours}}, upsert=True)
 
     def set_anti_channel(self, chat_id, enabled):
-        self.group_settings.update_one({"_id": chat_id}, {"$set": {"anti_channel": 1 if enabled else 0}}, upsert=True)
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"anti_channel": 1 if enabled else 0}}, upsert=True)
 
     def set_nsfw(self, chat_id, enabled):
-        self.group_settings.update_one({"_id": chat_id}, {"$set": {"nsfw_enabled": 1 if enabled else 0}}, upsert=True)
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"nsfw_enabled": 1 if enabled else 0}}, upsert=True)
 
     def add_user(self, user_id):
         self.users.update_one({"_id": user_id}, {"$set": {"_id": user_id}}, upsert=True)
@@ -118,7 +118,7 @@ class PersistentDB:
 
     def remove_group(self, chat_id):
         self.groups.delete_one({"_id": chat_id})
-        self.group_settings.delete_one({"_id": chat_id})
+        self.group_config.delete_one({"_id": chat_id})
 
     def get_all_targets(self):
         users = [u["_id"] for u in self.users.find()]
@@ -326,7 +326,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🛠 **ADMIN COMMANDS**\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "• `/antichannel on/off` : Stop channel posts\n"
-                "• `/settings <warn> <hrs>` : Warn/Mute limits\n"
+                "• `/config <warn> <hrs>` : Warn/Mute limits\n"
                 "• `/delay <min>` : Media auto-delete\n"
                 "• `/approve` : Whitelist a user\n"
                 "• `/unapprove` : Remove from whitelist\n"
@@ -341,7 +341,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             group_text = (
                 "💡 **Help Menu**\n\n"
-                "To keep the group chat clean, please check my commands in Private Message."
+                "Hi please click the button below to get the help menu in your DMs.."
             )
             keyboard = [
                 [InlineKeyboardButton("💬 Open DM", url=dm_url)],
@@ -502,7 +502,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 **ADMIN COMMANDS**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• `/antichannel on/off` : Stop channel posts\n"
-        "• `/settings <warn> <hrs>` : Warn/Mute limits\n"
+        "• `/config <warn> <hrs>` : Warn/Mute limits\n"
         "• `/delay <min>` : Media auto-delete\n"
         "• `/approve` : Whitelist a user\n"
         "• `/unapprove` : Remove from whitelist\n"
@@ -581,7 +581,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
     
-async def set_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -590,14 +590,14 @@ async def set_settings_command(update: Update, context: ContextTypes.DEFAULT_TYP
         db.set_limits(update.effective_chat.id, warns, hours)
         sent_msg = await update.message.reply_text(f"✅ Limit {warns}, Mute {hours}h")
     except: 
-        sent_msg = await update.message.reply_text("Usage: `/settings <warns> <hours>`")
+        sent_msg = await update.message.reply_text("Usage: `/config <warns> <hours>`")
     context.job_queue.run_once(delete_msg_job, 30, chat_id=update.effective_chat.id, data=sent_msg.message_id)
 
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Admin Permission Check
     if not await is_user_admin(update, context): 
         await update.message.reply_text(
-            "❌ <b>Permission Denied!</b>\nOnly admins can change the media delay settings.", 
+            "❌ <b>Permission Denied!</b>\nOnly admins can change the media delay config.", 
             parse_mode='HTML'
         )
         return
@@ -631,7 +631,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_msg = await update.message.reply_text(error_text, parse_mode='HTML')
     else:
         # Attractive Current Status Message (When no arguments are passed)
-        current_delay = db.get_settings(chat_id)[0]
+        current_delay = db.get_config(chat_id)[0]
         status_text = (
             f"⏱️ <b>Current Media Delay:</b> <code>{current_delay} Minutes</code>\n\n"
             f"<i>Media files are currently being auto-deleted after {current_delay} minutes.</i>\n\n"
@@ -1193,9 +1193,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not getattr(update.message, 'is_automatic_forward', False):
             is_channel_post = True
 
-    # Get Settings
-    settings = db.get_settings(chat_id)
-    anti_channel_enabled = settings[4] if len(settings) > 4 else 1
+    # Get config
+    config = db.get_config(chat_id)
+    anti_channel_enabled = config[4] if len(config) > 4 else 1
 
     # Determine if user is Admin or Approved
     is_exempt = False
@@ -1229,7 +1229,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db.add_group(chat_id, update.effective_chat.title)
     # Update this line to fetch all 6 variables
-    delay_min, warn_limit, mute_hrs, _, anti_ch, nsfw_enabled = db.get_settings(chat_id)
+    delay_min, warn_limit, mute_hrs, _, anti_ch, nsfw_enabled = db.get_config(chat_id)
 
     # Media Logic (Applies to everyone)
     is_media = any([update.message.photo, update.message.video, update.message.document, 
@@ -1541,7 +1541,7 @@ def main():
     app_bot.add_handler(CommandHandler("help", help_command))
     app_bot.add_handler(CommandHandler("broadcast", broadcast_command))
     app_bot.add_handler(CommandHandler("delay", set_delay_command))
-    app_bot.add_handler(CommandHandler("settings", set_settings_command))
+    app_bot.add_handler(CommandHandler("config", set_config_command))
     app_bot.add_handler(CommandHandler("status", status_command))
     app_bot.add_handler(CommandHandler("grouplist", grouplist_command))
     app_bot.add_handler(CommandHandler("aplist", aplist_command))
