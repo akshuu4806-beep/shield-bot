@@ -311,7 +311,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ==========================================
     # 🟢 OPEN BUTTONS (EVERYONE CAN USE THESE)
     # ==========================================
-   if query.data == "help_main":
+    if query.data == "help_main":
         is_private = update.effective_chat.type == 'private'
 
         if is_private:
