@@ -383,11 +383,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- CONFIGURATION MENUS LOGIC ---
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
-        config = db.get_config(chat_id)
-        warn_limit = config[1]
-        action = config[2]
         
+        if query.data.startswith("setwarn_"):
+            limit = int(query.data.split("_")[1]) 
+            db.set_warn_limit(chat_id, limit)
+            await query.answer(f"✅ Warn limit set to {limit}")
+            query.data = "cfg_warn" # Main menu par jane ke bajaye wahi rukein
+
         if query.data == "cfg_warn":
+            # Naya data turant DB se fetch karein
+            config = db.get_config(chat_id)
+            warn_limit = config[1]
+            
             def get_btn(num):
                 btn_text = f"✅ {num}" if num == warn_limit else str(num)
                 return InlineKeyboardButton(btn_text, callback_data=f"setwarn_{num}")
@@ -400,12 +407,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             return
 
-        if query.data.startswith("setwarn_"):
-            limit = int(query.data.split("_")[1]) 
-            db.set_warn_limit(chat_id, limit)
-            await query.answer(f"✅ Warn limit set to {limit}")
-            query.data = "cfg_main"
-
         if query.data == "cfg_mute":
             db.set_action(chat_id, "mute")
             await query.answer("✅ Action set to MUTE")
@@ -417,6 +418,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query.data = "cfg_main"
 
         if query.data == "cfg_main":
+            # Naya data turant DB se fetch karein
             config = db.get_config(chat_id)
             warn_limit = config[1]
             action = config[2]
@@ -1458,11 +1460,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             user_id=user.id, 
                             permissions=ChatPermissions(can_send_messages=False)
                         )
+                        # Agar limit exact hit hui hai = Pehli baar mute hua hai
                         if count == warn_limit:
                             text = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                             keyboard = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                             await context.bot.send_message(chat_id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-                            db.reset_warnings(user.id)
+                        # Limit ke baad bhi spam kar raha hai
                         else:
                             text = f"🚫 <b>User {safe_name} is already muted.</b>"
                             msg = await context.bot.send_message(chat_id, text, parse_mode='HTML')
@@ -1475,11 +1478,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif action == "ban":
                     try:
                         await context.bot.ban_chat_member(chat_id=chat_id, user_id=user.id)
+                        # Agar limit exact hit hui hai = Pehli baar ban hua hai
                         if count == warn_limit:
                             text = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                             keyboard = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                             await context.bot.send_message(chat_id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-                            db.reset_warnings(user.id)
+                        # Limit ke baad bhi spam kar raha hai
                         else:
                             text = f"🚫 <b>User {safe_name} is already banned.</b>"
                             msg = await context.bot.send_message(chat_id, text, parse_mode='HTML')
@@ -1490,6 +1494,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         db.remove_warning(user.id)
                 return
 
+            # --- NORMAL WARNINGS (Jab tak limit hit na ho) ---
             display_count = count if count <= warn_limit else warn_limit
             base_info_text = (
                 f"👤 <b>User:</b> {user.mention_html()}\n"
