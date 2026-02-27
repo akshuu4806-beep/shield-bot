@@ -379,6 +379,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Only admins can use this button.", show_alert=True)
         return
 
+    await query.answer() # Answer query to stop the loading circle for admins
+
     # --- CONFIGURATION MENUS LOGIC ---
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
         
