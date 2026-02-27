@@ -384,56 +384,63 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- CONFIGURATION MENUS LOGIC ---
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
         
+        # 1. ACTION HANDLING (Database update karna)
         if query.data.startswith("setwarn_"):
             limit = int(query.data.split("_")[1]) 
             db.set_warn_limit(chat_id, limit)
             await query.answer(f"✅ Warn limit set to {limit}")
-            query.data = "cfg_warn" # Main menu par jane ke bajaye wahi rukein
-
-        if query.data == "cfg_warn":
-            # Naya data turant DB se fetch karein
-            config = db.get_config(chat_id)
-            warn_limit = config[1]
+            query.data = "cfg_warn" # State change karo taaki wahi menu dubara render ho
             
-            def get_btn(num):
-                btn_text = f"✅ {num}" if num == warn_limit else str(num)
-                return InlineKeyboardButton(btn_text, callback_data=f"setwarn_{num}")
-                
-            keyboard = [
-                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
-                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
-                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
-            ]
-            await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            return
-
-        if query.data == "cfg_mute":
+        elif query.data == "cfg_mute":
             db.set_action(chat_id, "mute")
             await query.answer("✅ Action set to MUTE")
-            query.data = "cfg_main"
-
-        if query.data == "cfg_ban":
+            query.data = "cfg_main" # State change karo taaki wahi menu dubara render ho
+            
+        elif query.data == "cfg_ban":
             db.set_action(chat_id, "ban")
             await query.answer("✅ Action set to BAN")
             query.data = "cfg_main"
 
-        if query.data == "cfg_main":
-            # Naya data turant DB se fetch karein
-            config = db.get_config(chat_id)
-            warn_limit = config[1]
-            action = config[2]
-            
-            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-            
-            text = f"⚙️ **Group Configuration**\n\n⚠️ **Current Warn Limit:** {warn_limit}\n🔨 **Current Action:** {action.upper()}"
-            keyboard = [
-                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
-            ]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            return
+        # 2. UI RENDERING (Instant tick ke sath naya menu bhejna)
+        try:
+            if query.data == "cfg_warn":
+                config = db.get_config(chat_id)
+                warn_limit = config[1]
+                
+                def get_btn(num):
+                    btn_text = f"✅ {num}" if num == warn_limit else str(num)
+                    return InlineKeyboardButton(btn_text, callback_data=f"setwarn_{num}")
+                    
+                keyboard = [
+                    [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
+                    [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
+                    [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+                ]
+                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                return
+
+            elif query.data == "cfg_main":
+                config = db.get_config(chat_id)
+                warn_limit = config[1]
+                action = config[2]
+                
+                mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
+                ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+                
+                text = f"⚙️ **Group Configuration**\n\n⚠️ **Current Warn Limit:** {warn_limit}\n🔨 **Current Action:** {action.upper()}"
+                keyboard = [
+                    [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
+                    [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
+                    [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+                ]
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                return
+        except Exception:
+            # Agar user ne pehle se tick hue button par dobara click kar diya
+            # toh Telegram error deta hai "Message is not modified".
+            # Is Except se bot crash nahi hoga aur loading circle apne aap band ho jayega.
+            pass
+        return
             
     if "_" in query.data:
         parts = query.data.split("_")
@@ -1454,44 +1461,44 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if count >= warn_limit:
                 if action == "mute":
-                    try:
-                        await context.bot.restrict_chat_member(
-                            chat_id=chat_id, 
-                            user_id=user.id, 
-                            permissions=ChatPermissions(can_send_messages=False)
-                        )
-                        # Agar limit exact hit hui hai = Pehli baar mute hua hai
-                        if count == warn_limit:
+                    # Agar limit exact hit hui hai = Pehli baar mute kar rahe hain
+                    if count == warn_limit:
+                        try:
+                            await context.bot.restrict_chat_member(
+                                chat_id=chat_id, 
+                                user_id=user.id, 
+                                permissions=ChatPermissions(can_send_messages=False)
+                            )
                             text = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                             keyboard = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                             await context.bot.send_message(chat_id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-                        # Limit ke baad bhi spam kar raha hai
-                        else:
-                            text = f"🚫 <b>User {safe_name} is already muted.</b>"
-                            msg = await context.bot.send_message(chat_id, text, parse_mode='HTML')
-                            asyncio.create_task(delete_after_delay(msg, 30))
-                    except Exception as e:
-                        error_msg = f"🚨 <b>MUTE FAILED</b>\n<b>I don't have permission to mute users plz give me ban/restrict rights.</b>"
-                        await context.bot.send_message(chat_id, error_msg, parse_mode='HTML')
-                        db.remove_warning(user.id)
+                        except Exception as e:
+                            error_msg = f"🚨 <b>MUTE FAILED</b>\n<b>I don't have permission to mute users plz give me ban/restrict rights.</b>"
+                            await context.bot.send_message(chat_id, error_msg, parse_mode='HTML')
+                            db.remove_warning(user.id)
+                    # Limit ke baad bhi spam kar raha hai (Pehle se muted/banned hai)
+                    else:
+                        text = f"🚫 <b>User {safe_name} is already muted.</b>"
+                        msg = await context.bot.send_message(chat_id, text, parse_mode='HTML')
+                        asyncio.create_task(delete_after_delay(msg, 30))
 
                 elif action == "ban":
-                    try:
-                        await context.bot.ban_chat_member(chat_id=chat_id, user_id=user.id)
-                        # Agar limit exact hit hui hai = Pehli baar ban hua hai
-                        if count == warn_limit:
+                    # Agar limit exact hit hui hai = Pehli baar ban kar rahe hain
+                    if count == warn_limit:
+                        try:
+                            await context.bot.ban_chat_member(chat_id=chat_id, user_id=user.id)
                             text = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                             keyboard = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                             await context.bot.send_message(chat_id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-                        # Limit ke baad bhi spam kar raha hai
-                        else:
-                            text = f"🚫 <b>User {safe_name} is already banned.</b>"
-                            msg = await context.bot.send_message(chat_id, text, parse_mode='HTML')
-                            asyncio.create_task(delete_after_delay(msg, 30))
-                    except Exception as e:
-                        error_msg = f"🚨 <b>BAN FAILED</b>\n<b>I don't have permission to ban users plz give me ban/restrict rights.</b>"
-                        await context.bot.send_message(chat_id, error_msg, parse_mode='HTML')
-                        db.remove_warning(user.id)
+                        except Exception as e:
+                            error_msg = f"🚨 <b>BAN FAILED</b>\n<b>I don't have permission to ban users plz give me ban/restrict rights.</b>"
+                            await context.bot.send_message(chat_id, error_msg, parse_mode='HTML')
+                            db.remove_warning(user.id)
+                    # Limit ke baad bhi spam kar raha hai (Pehle se banned hai)
+                    else:
+                        text = f"🚫 <b>User {safe_name} is already banned.</b>"
+                        msg = await context.bot.send_message(chat_id, text, parse_mode='HTML')
+                        asyncio.create_task(delete_after_delay(msg, 30))
                 return
 
             # --- NORMAL WARNINGS (Jab tak limit hit na ho) ---
