@@ -1503,7 +1503,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Warning count reset taaki har spam pe Failed hi dikhaye
                         db.warnings.update_one({"_id": user.id}, {"$set": {"count": warn_limit - 1}})
                 return
-            
+                
 # ========== ANTI-BOT SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members: return
