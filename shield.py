@@ -1293,15 +1293,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # UPDATE SCANNED STAT
     db.update_stat('scanned')
 
-    # 1. Identify Channel Posts
+    # 1. Identify Channel Posts (BULLETPROOF VERSION)
     is_channel_post = False
     
-    # Updated logic: Check if the message has a forward origin and if it's from a channel
-    if update.message.forward_origin and update.message.forward_origin.type == 'channel':
-        is_channel_post = True
-        
-    # Case B: Send as Channel (Anonymous posting by admins)
-    if update.message.sender_chat and update.message.sender_chat.type == 'channel':
+    # Case A: Forwarded from a channel (Naye aur Purane dono PTB versions ke liye)
+    if getattr(update.message, 'forward_origin', None):
+        if update.message.forward_origin.type == 'channel':
+            is_channel_post = True
+    elif getattr(update.message, 'forward_from_chat', None):  
+        if update.message.forward_from_chat.type == 'channel':
+            is_channel_post = True
+
+    # Case B: Send as Channel (Jab log Group mein Channel ban kar chat karte hain)
+    if getattr(update.message, 'sender_chat', None) and update.message.sender_chat.type == 'channel':
         if not getattr(update.message, 'is_automatic_forward', False):
             is_channel_post = True
 
@@ -1324,8 +1328,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ANTI-CHANNEL LOGIC
     if is_channel_post:
         if anti_channel_enabled:
-            # If ON and user is NOT an admin/approved, delete immediately
-            if not is_exempt:
+            # Agar log 'Send As Channel' use karte hain, toh unhe delete karo (Even Admins!)
+            # Par agar admin normal forward kar raha hai, toh allow karo (is_exempt kaam aayega)
+            is_anonymous_channel_chat = getattr(update.message, 'sender_chat', None) is not None
+            
+            if not is_exempt or is_anonymous_channel_chat:
                 try:
                     await update.message.delete()
                     return # Stop execution here
@@ -1334,8 +1341,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if "can't be deleted" in error_msg or "not enough rights" in error_msg:
                         try:
                             await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-                        except:
-                            pass
+                        except: pass
                     return # Stop execution even if delete fails
         else:
             # 💡 MAIN FIX: If OFF, bypass all other strict filters (Link/Virus) for this channel post!
