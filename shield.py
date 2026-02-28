@@ -390,49 +390,94 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- CONFIGURATION LOGIC (INSTANT TICK) ---
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
-        try:
-            # Action Handling & Instant Toast Message
-            if query.data.startswith("setwarn_"):
-                limit = int(query.data.split("_")[1])
-                db.set_warn_limit(chat_id, limit)
-                await query.answer(f"✅ Warning limit changed to {limit}")
-                query.data = "cfg_warn" 
+        config = db.get_config(chat_id)
+        warn_limit, action = config[1], config[2]
 
-            elif query.data == "cfg_mute":
-                db.set_action(chat_id, "mute")
-                await query.answer("✅ Punishment set to MUTE")
-                query.data = "cfg_main" 
-
-            elif query.data == "cfg_ban":
-                db.set_action(chat_id, "ban")
-                await query.answer("✅ Punishment set to BAN")
-                query.data = "cfg_main"
-
-            # UI Refresh (Tick Update on Button)
-            config = db.get_config(chat_id)
-            if query.data == "cfg_warn":
-                warn_limit = config[1]
-                def get_btn(num):
-                    txt = f"✅ {num}" if num == warn_limit else str(num)
-                    return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
-                keyboard = [[get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
-                            [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
-                            [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]]
-                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        # 1. Action: Warn Limit Change (Instant Update)
+        if query.data.startswith("setwarn_"):
+            limit = int(query.data.split("_")[1])
+            if limit == warn_limit:
+                await query.answer("✅ Already selected!")
+                return
             
-            elif query.data == "cfg_main":
-                warn_limit, action = config[1], config[2]
-                mute_btn = f"✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-                ban_btn = f"✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-                text = f"⚙️ **Group Configuration**\n\n⚠️ **Limit:** {warn_limit}\n🔨 **Action:** {action.upper()}"
-                keyboard = [[InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-                            [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-                            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+            db.set_warn_limit(chat_id, limit)
+            warn_limit = limit # Update local variable instantly
+            
+            # Rebuild keyboard instantly with the new tick
+            def get_btn(num):
+                txt = f"✅ {num}" if num == warn_limit else str(num)
+                return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
+            
+            keyboard = [
+                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
+                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
+                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+            ]
+            try:
+                # edit_message_reply_markup is faster than edit_message_text for just button changes
+                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            except Exception: pass
+            await query.answer(f"✅ Warning limit changed to {limit}")
+            return
+
+        # 2. Action: Mute/Ban Change (Instant Update)
+        if query.data in ["cfg_mute", "cfg_ban"]:
+            new_action = query.data.split("_")[1]
+            if new_action == action:
+                await query.answer("✅ Already selected!")
+                return
+            
+            db.set_action(chat_id, new_action)
+            action = new_action # Update local variable instantly
+            
+            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
+            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+            
+            text = f"⚙️ **Group Configuration**\n\n⚠️ **Limit:** {warn_limit}\n🔨 **Action:** {action.upper()}"
+            keyboard = [
+                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
+                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
+                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+            ]
+            try:
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception as e:
-            # Agar 'Message is not modified' error aata hai toh ignore karega
-            pass 
-        return
+            except Exception: pass
+            await query.answer(f"✅ Punishment set to {action.upper()}")
+            return
+
+        # 3. Menu: Render Warn Limits Page
+        if query.data == "cfg_warn":
+            def get_btn(num):
+                txt = f"✅ {num}" if num == warn_limit else str(num)
+                return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
+                
+            keyboard = [
+                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
+                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
+                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+            ]
+            try:
+                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            except Exception: pass
+            await query.answer()
+            return
+
+        # 4. Menu: Render Main Config Page
+        if query.data == "cfg_main":
+            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
+            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+            
+            text = f"⚙️ **Group Configuration**\n\n⚠️ **Limit:** {warn_limit}\n🔨 **Action:** {action.upper()}"
+            keyboard = [
+                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
+                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
+                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+            ]
+            try:
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            except Exception: pass
+            await query.answer()
+            return
 
     # --- OTHER ADMIN BUTTONS (Approve, Unban, Unmute) ---
     try: await query.answer() 
