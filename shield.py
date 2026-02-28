@@ -313,8 +313,13 @@ async def unapprove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ========== JOBS & CALLBACKS ==========
 async def delete_msg_job(context: ContextTypes.DEFAULT_TYPE):
-    try: await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
-    except: pass
+    try: 
+        await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+            try: await context.bot.send_message(context.job.chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+            except: pass
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -323,10 +328,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 1. DELETE MESSAGES (Har koi use kar sakta hai)
     if "delete_msg" in query.data or "delmsg" in query.data:
-        try: await query.message.delete()
-        except: pass
+        try: 
+            await query.message.delete()
+        except Exception as e: 
+            error_msg = str(e).lower()
+            if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                await query.answer("⚠️ Please give me delete messages permission.", show_alert=True)
         return
-
+        
     # 2. HELP MENU (Har koi use kar sakta hai)
     if query.data == "help_main":
         is_private = update.effective_chat.type == 'private'
@@ -456,70 +465,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id, f"🧹 **Warnings Cleared:** User `{target_id}` is now warning-free.", parse_mode='Markdown')
             
             elif action == "unban":
+                # 1. First, try to unban the user
                 try:
                     await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
                     db.reset_warnings(target_id)
-                    await query.edit_message_text(f"🔓 User `{target_id}` has been Unbanned. Warnings restarted!", parse_mode='Markdown')
                 except Exception as e:
+                    # If the bot lacks permissions or the unban fails, send the error and stop
                     await context.bot.send_message(chat_id, "❌ Failed to unban. Make sure I am an admin.")
-                    
-            elif action == "unmute":
+                    return
+
+                # 2. If the unban is successful, update the button message
                 try:
-                    await context.bot.restrict_chat_member(
-                        chat_id=chat_id, 
-                        user_id=target_id, 
-                        permissions=ChatPermissions(
-                            can_send_messages=True,
-                            can_send_other_messages=True,
-                            can_add_web_page_previews=True,
-                            can_invite_users=True
-                        )
-                    )
-                    db.reset_warnings(target_id)
-                    await query.edit_message_text(text=f"✅ User `{target_id}` has been **Unmuted**.", parse_mode='Markdown')
-                    await context.bot.send_message(chat_id, f"🔓 **Unmuted:** User `{target_id}` can now chat.", parse_mode='Markdown')
-                except Exception as e:
-                    await context.bot.send_message(chat_id, f"❌ **Error:** Could not unmute. Please check my admin permissions.", parse_mode='Markdown')
-            
-    if "_" in query.data:
-        parts = query.data.split("_")
-        action = parts[0]
-        
-        # Make sure we actually have a target ID before converting to int
-        if len(parts) > 1 and parts[-1].lstrip('-').isdigit():
-            target_id = int(parts[-1])
-
-            if action == "approve":
-                db.add_to_allowlist(target_id)
-                db.reset_warnings(target_id)
-                keyboard = [[InlineKeyboardButton("❌ Unapprove", callback_data=f"unapprove_{target_id}"), InlineKeyboardButton("🧹 cancle warning", callback_data=f"cancle warning_{target_id}")],
-                            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
-                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-                await context.bot.send_message(chat_id, f"✅ **Approved:** User `{target_id}` has been whitelisted.", parse_mode='Markdown')
-
-            elif action == "unapprove":
-                db.remove_from_allowlist(target_id)
-                keyboard = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{target_id}"), InlineKeyboardButton("🧹 cancle warning", callback_data=f"cancle warning_{target_id}")],
-                            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
-                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-                await context.bot.send_message(chat_id, f"❌ **Unapproved:** User `{target_id}` removed from whitelist.", parse_mode='Markdown')
-
-            elif action in ["unwarn", "cancle warning"]:
-                db.reset_warnings(target_id)
-                await context.bot.send_message(chat_id, f"🧹 **Warnings Cleared:** User `{target_id}` is now warning-free.", parse_mode='Markdown')
-            
-            elif action == "unban":
-                try:
-                    # Telegram API ko unban karne ka command bhejna
-                    await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
-                    # Database se uski warning wapas zero kar dena
-                    db.reset_warnings(target_id)
-                    # Message ko update kar dena
                     await query.edit_message_text(f"🔓 User `{target_id}` has been Unbanned. Warnings restarted!", parse_mode='Markdown')
-                except Exception as e:
-                    await query.answer("❌ Failed to unban. Make sure I am an admin.", show_alert=True)
+                except Exception:
+                    # Ignore minor errors like "Message is not modified" from double clicks
+                    pass
                     
             elif action == "unmute":
+                # 1. Pehle sirf user ko unmute karne ka try karenge
                 try:
                     await context.bot.restrict_chat_member(
                         chat_id=chat_id, 
@@ -532,11 +495,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     )
                     db.reset_warnings(target_id)
-                    await query.edit_message_text(text=f"✅ User `{target_id}` has been **Unmuted**.", parse_mode='Markdown')
-                    await context.bot.send_message(chat_id, f"🔓 **Unmuted:** User `{target_id}` can now chat.", parse_mode='Markdown')
                 except Exception as e:
+                    # Agar restrict FAILED hua (jaise admin rights nahi hain), tabhi ye message aayega
                     await context.bot.send_message(chat_id, f"❌ **Error:** Could not unmute. Please check my admin permissions.", parse_mode='Markdown')
+                    return # Code yahan se ruk jayega
 
+                # 2. Agar unmute SUCCESSFUL ho gaya, tab message ko edit karenge
+                try:
+                    await query.edit_message_text(text=f"✅ User `{target_id}` has been **Unmuted**.", parse_mode='Markdown')
+                    # Note: Maine yahan se ek extra send_message hata diya hai, 
+                    # kyunki aapka 'auto_reset_on_unmute' function pehle se hi group mein 
+                    # "🔄 User has been unmuted" ka alert bhej raha hai. 
+                    # Isse bot spam nahi karega.
+                except Exception:
+                    # Agar user button par 2 baar click kar de, toh ye minor error ko chup chap ignore karega
+                    pass
+            
 async def auto_reset_on_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.chat_member:
         return
@@ -1273,12 +1247,19 @@ async def edited_message_handler(update: Update, context: ContextTypes.DEFAULT_T
     # 1. Message ko turant delete karna
     try:
         await msg.delete()
-    except:
-        pass # Agar bot ke paas delete permission nahi hui toh error nahi aayega
-        
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+            try:
+                await context.bot.send_message(msg.chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+            except:
+                pass
+                
     # 2. Edit kiye hue message ka text nikalna
     edited_text = msg.text or msg.caption or "Media/Unsupported Content"
     safe_text = html.escape(edited_text)
+    
+    # ... (iske niche ka baaki pura code bilkul same rahega)
     
     # 3. Notification message banana (Spoiler ke sath)
     alert_text = (
@@ -1348,10 +1329,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await update.message.delete()
                     return # Stop execution here
-                except: pass
+                except Exception as e: 
+                    error_msg = str(e).lower()
+                    if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                        try:
+                            await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+                        except:
+                            pass
+                    return # Stop execution even if delete fails
         else:
             # 💡 MAIN FIX: If OFF, bypass all other strict filters (Link/Virus) for this channel post!
-            is_exempt = True 
+            is_exempt = True
+            
 
     # 2. Private / Group Logic
     if update.effective_chat.type == 'private':
@@ -1429,12 +1418,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await update.message.delete()
                 except Exception as e:
-                    pass # Agar permission na ho to crash na ho
+                    error_msg = str(e).lower()
+                    if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                        try:
+                            await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+                        except:
+                            pass
                 
                 # 2. Add warning to database
                 db.update_stat('warnings_issued')
                 db.add_warning(user.id)
-                
+                                
                 # 3. Silently Tag Admins in the Group
                 admin_tags = " ".join([f'<a href="tg://user?id={aid}">👮‍♂️ Admin</a>' for aid in ADMIN_IDS])
                 
@@ -1494,12 +1488,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ===================================================================
         if violation:
             db.update_stat('warnings_issued')
-            try: await update.message.delete()
-            except: pass
+            try: 
+                await update.message.delete()
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                    try:
+                        await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+                    except:
+                        pass
             
             count = db.add_warning(user.id)
             warn_limit, action = config[1], config[2]
             safe_name = html.escape(user.full_name)
+            
+            # ... (iske niche ka baaki pura code bilkul waisa hi rahega)
 
             # CASE 1: LIMIT CROSS HO CHUKI HAI (User already Muted/Banned hai aur Spam kar raha hai)
             if count > warn_limit:
