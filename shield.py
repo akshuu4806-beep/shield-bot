@@ -76,6 +76,9 @@ class PersistentDB:
         self.blocked_stickers = self.db["blocked_stickers"] # NAYI LINE
         self.blocked_words = self.db["blocked_words"]       # NAYI LINE
         self._init_stats()
+        # Add these two lines inside def __init__(self):
+        self.local_blocked_words = self.db["local_blocked_words"]
+        self.local_blocked_stickers = self.db["local_blocked_stickers"]
 
     def _init_stats(self):
         stats = self.global_stats.find_one({"_id": 1})
@@ -205,8 +208,40 @@ class PersistentDB:
                 self.warnings.delete_one({"_id": user_id})
             else:
                 self.warnings.update_one({"_id": user_id}, {"$set": {"count": new_count}})
-                
+
+    # ==========================================
+    # LOCAL BLOCKLIST METHODS
+    # ==========================================
+    def add_local_word(self, chat_id, word):
+        word = word.lower()
+        self.local_blocked_words.update_one(
+            {"chat_id": chat_id, "word": word}, 
+            {"$set": {"chat_id": chat_id, "word": word}}, 
+            upsert=True
+        )
+
+    def remove_local_word(self, chat_id, word):
+        word = word.lower()
+        return self.local_blocked_words.delete_one({"chat_id": chat_id, "word": word}).deleted_count > 0
+
+    def get_local_words(self, chat_id):
+        return [w["word"] for w in self.local_blocked_words.find({"chat_id": chat_id})]
+
+    def add_local_sticker(self, chat_id, set_name):
+        self.local_blocked_stickers.update_one(
+            {"chat_id": chat_id, "set_name": set_name}, 
+            {"$set": {"chat_id": chat_id, "set_name": set_name}}, 
+            upsert=True
+        )
+
+    def remove_local_sticker(self, chat_id, set_name):
+        return self.local_blocked_stickers.delete_one({"chat_id": chat_id, "set_name": set_name}).deleted_count > 0
+
+    def get_local_stickers(self, chat_id):
+        return [s["set_name"] for s in self.local_blocked_stickers.find({"chat_id": chat_id})]
+
 db = PersistentDB()
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -452,10 +487,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     # 👆 YAHAN TAK 👆
 
-    # ==========================================
-    # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
-    # ==========================================
-    is_private = update.effective_chat.type == 'private'
     
     # ==========================================
     # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
@@ -1464,6 +1495,163 @@ async def greact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Failed to add reaction.\nMake sure the message ID is correct and the emoji is allowed in the group.\nError: `{e}`", parse_mode='Markdown')
 
+# ==========================================
+# LOCAL BLOCKLIST COMMANDS (GROUP ADMINS)
+# ==========================================
+
+async def blockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    # 👇 Admin ki command ko 5 second baad delete karne ka timer
+    if update.message:
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=update.message.message_id)
+
+    if update.effective_chat.type == 'private':
+        msg = await update.message.reply_text("❌ Ye command sirf groups mein kaam aati hai.")
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    if not await is_user_admin(update, context) and not db.is_sudo(update.effective_user.id):
+        msg = await update.message.reply_text("❌ Aapke paas ye use karne ki permission nahi hai.")
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    word = ""
+    is_reply = False
+    if context.args:
+        word = " ".join(context.args).lower()
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        word = update.message.reply_to_message.text.strip().lower()
+        is_reply = True # 👈 Pata lagaya ki ye reply hai
+        
+    if not word:
+        msg = await update.message.reply_text("❗ **Usage:** Kisi message par reply karein, ya type karein `/blockword <word>`", parse_mode='Markdown')
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    db.add_local_word(chat_id, word)
+    msg = await update.message.reply_text(f"✅ Word `{word}` ab **sirf is group ke liye** block ho gaya hai.", parse_mode='Markdown')
+    context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+
+    # 👇 NAYI LINE: Jis kharab word wale message par reply kiya tha, usko turant delete karna
+    if is_reply:
+        try:
+            await update.message.reply_to_message.delete()
+        except Exception:
+            pass
+
+async def blocksticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    # 👇 Admin ki command ko 5 second baad delete karne ka timer
+    if update.message:
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=update.message.message_id)
+
+    if update.effective_chat.type == 'private': return
+    if not await is_user_admin(update, context) and not db.is_sudo(update.effective_user.id): return
+        
+    set_name = None
+    is_reply = False
+    if context.args:
+        set_name = context.args[0]
+    elif update.message.reply_to_message and update.message.reply_to_message.sticker:
+        set_name = update.message.reply_to_message.sticker.set_name
+        is_reply = True # 👈 Pata lagaya ki ye reply hai
+        
+    if not set_name:
+        msg = await update.message.reply_text("❗ **Usage:** Kisi sticker par reply karein, ya type karein `/blocksticker <pack_name>`", parse_mode='Markdown')
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    db.add_local_sticker(chat_id, set_name)
+    msg = await update.message.reply_text(f"✅ Sticker pack `{set_name}` ab **sirf is group ke liye** block ho gaya hai.", parse_mode='Markdown')
+    context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+
+    # 👇 NAYI LINE: Jis kharab sticker par reply kiya tha, usko turant delete karna
+    if is_reply:
+        try:
+            await update.message.reply_to_message.delete()
+        except Exception:
+            pass
+
+async def unblockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if update.message:
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=update.message.message_id)
+
+    if update.effective_chat.type == 'private': return
+    if not await is_user_admin(update, context) and not db.is_sudo(update.effective_user.id): return
+        
+    word = ""
+    if context.args:
+        word = " ".join(context.args).lower()
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        word = update.message.reply_to_message.text.strip().lower()
+        
+    if not word:
+        msg = await update.message.reply_text("❗ **Usage:** Kisi message par reply karein, ya type karein `/unblockword <word>`", parse_mode='Markdown')
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    if db.remove_local_word(chat_id, word):
+        msg = await update.message.reply_text(f"✅ Word `{word}` ko is group mein allow kar diya gaya hai.", parse_mode='Markdown')
+    else:
+        msg = await update.message.reply_text("❌ Ye word yahan ki blocklist mein nahi mila.")
+    context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+    
+async def unblocksticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if update.message:
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=update.message.message_id)
+
+    if update.effective_chat.type == 'private': return
+    if not await is_user_admin(update, context) and not db.is_sudo(update.effective_user.id): return
+        
+    set_name = None
+    if context.args:
+        set_name = context.args[0]
+    elif update.message.reply_to_message and update.message.reply_to_message.sticker:
+        set_name = update.message.reply_to_message.sticker.set_name
+        
+    if not set_name:
+        msg = await update.message.reply_text("❗ **Usage:** Kisi sticker par reply karein, ya type karein `/unblocksticker <pack_name>`", parse_mode='Markdown')
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    if db.remove_local_sticker(chat_id, set_name):
+        msg = await update.message.reply_text(f"✅ Sticker pack `{set_name}` ko is group mein allow kar diya gaya hai.", parse_mode='Markdown')
+    else:
+        msg = await update.message.reply_text("❌ Sticker pack yahan ki blocklist mein nahi mila.")
+    context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+
+async def listlocal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if update.message:
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=update.message.message_id)
+
+    if update.effective_chat.type == 'private': return
+    if not await is_user_admin(update, context) and not db.is_sudo(update.effective_user.id): return
+        
+    words = db.get_local_words(chat_id)
+    stickers = db.get_local_stickers(chat_id)
+    
+    if not words and not stickers:
+        msg = await update.message.reply_text("📭 Is group ki custom blocklist ekdum khali hai.")
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+        
+    text = f"⚙️ **Local Blocklist for {update.effective_chat.title}**\n\n"
+    if words:
+        text += "🚫 **Blocked Words:**\n" + "\n".join([f"• `{w}`" for w in words]) + "\n\n"
+    if stickers:
+        text += "🚫 **Blocked Stickers:**\n" + "\n".join([f"• `{s}`" for s in stickers])
+        
+    msg = await update.message.reply_text(text, parse_mode='Markdown')
+    context.job_queue.run_once(delete_msg_job, 15, chat_id=chat_id, data=msg.message_id)
+
 # ========== HANDLERS ==========
 async def edited_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.edited_message
@@ -1604,18 +1792,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         blocked_sticker_found = False
         caught_word = ""
         
-        # 1. Check Custom Words
+        # 1. Check Custom Words (Global + Local combined)
         if msg_text:
-            for word in db.get_blocked_words():
-                # Word match karne ka best tarika
+            all_blocked_words = db.get_blocked_words() + db.get_local_words(chat_id)
+            for word in all_blocked_words:
                 if re.search(r'\b' + re.escape(word) + r'\b', msg_text.lower()):
                     blocked_word_found = True
-                    caught_word = word  # <--- Word ko save kar liya dikhane ke liye
+                    caught_word = word  
                     break
                     
-        # 2. Check Custom Sticker Packs
+        # 2. Check Custom Sticker Packs (Global + Local combined)
         if not blocked_word_found and update.message.sticker and update.message.sticker.set_name:
-            if update.message.sticker.set_name in db.get_blocked_stickers():
+            all_blocked_stickers = db.get_blocked_stickers() + db.get_local_stickers(chat_id)
+            if update.message.sticker.set_name in all_blocked_stickers:
                 blocked_sticker_found = True
                 
         # 🟢 CASE A: AGAR BLOCKED WORD MILA (Abuse)
@@ -1658,12 +1847,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             return # Yahan code ruk jayega
             
-    # ===================================================================
-    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
-    
-    # ===================================================================
-    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
-    
     # ===================================================================
     # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
     # Covers Media, Document, Video, Sticker, GIF
@@ -2006,6 +2189,13 @@ def main():
     app_bot.add_handler(CommandHandler("addword", addword_command))
     app_bot.add_handler(CommandHandler("rmword", rmword_command))
     app_bot.add_handler(CommandHandler("wordlist", wordlist_command))
+
+    # Add these lines inside your main() function
+    app_bot.add_handler(CommandHandler("blockword", blockword_command))
+    app_bot.add_handler(CommandHandler("unblockword", unblockword_command))
+    app_bot.add_handler(CommandHandler("blocksticker", blocksticker_command))
+    app_bot.add_handler(CommandHandler("unblocksticker", unblocksticker_command))
+    app_bot.add_handler(CommandHandler("listlocal", listlocal_command))
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
     app_bot.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.ChatType.GROUPS, edited_message_handler))
