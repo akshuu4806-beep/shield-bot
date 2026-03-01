@@ -73,6 +73,8 @@ class PersistentDB:
         self.groups = self.db["groups"]
         self.global_stats = self.db["global_stats"]
         self.sudos = self.db["sudos"]
+        self.blocked_stickers = self.db["blocked_stickers"] # NAYI LINE
+        self.blocked_words = self.db["blocked_words"]       # NAYI LINE
         self._init_stats()
 
     def _init_stats(self):
@@ -81,7 +83,7 @@ class PersistentDB:
             self.global_stats.insert_one({
                 "_id": 1, "scanned": 0, "bio_caught": 0, 
                 "media_deleted": 0, "warnings_issued": 0,
-                "nsfw_blocked": 0, "bot_start_time": datetime.now(IST).timestamp()
+                "nsfw_blocked": 0, "abuse_caught": 0, "bot_start_time": datetime.now(IST).timestamp()
             })
 
     def update_stat(self, column):
@@ -89,10 +91,33 @@ class PersistentDB:
 
     def get_global_stats(self):
         stats = self.global_stats.find_one({"_id": 1})
+        # Niche wali line dhyan se replace karna, isme abuse_caught add kiya hai
         return (stats.get("scanned", 0), stats.get("bio_caught", 0), stats.get("media_deleted", 0),
-                stats.get("warnings_issued", 0), stats.get("nsfw_blocked", 0), 
+                stats.get("warnings_issued", 0), stats.get("nsfw_blocked", 0), stats.get("abuse_caught", 0), 
                 stats.get("bot_start_time", datetime.now(IST).timestamp()))
+        
 
+    # (Fir isi class mein niche ye naye functions add kar dein)
+    def add_blocked_sticker(self, set_name):
+        self.blocked_stickers.update_one({"_id": set_name}, {"$set": {"_id": set_name}}, upsert=True)
+
+    def remove_blocked_sticker(self, set_name):
+        return self.blocked_stickers.delete_one({"_id": set_name}).deleted_count > 0
+
+    def get_blocked_stickers(self):
+        return [s["_id"] for s in self.blocked_stickers.find()]
+
+    def add_blocked_word(self, word):
+        word = word.lower()
+        self.blocked_words.update_one({"_id": word}, {"$set": {"_id": word}}, upsert=True)
+
+    def remove_blocked_word(self, word):
+        word = word.lower()
+        return self.blocked_words.delete_one({"_id": word}).deleted_count > 0
+
+    def get_blocked_words(self):
+        return [w["_id"] for w in self.blocked_words.find()]
+        
     def get_config(self, chat_id):
         s = self.group_config.find_one({"_id": chat_id})
         # 'mute_hours' ki jagah hum 'action' return kar rahe hain (Index 2 par)
@@ -381,6 +406,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
         return
 
+    # 👇 YAHAN PAR ADD KARNA HAI 👇
+    # ==========================================
+    # 👑 OWNER & SUDO LOCKED MENU
+    # ==========================================
+    if query.data == "sudo_menu":
+        # Security Check: Agar user Owner ya Sudo nahi hai, toh popup alert dedo
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await query.answer("❌ ACCESS DENIED!\n\nThis menu is locked. Only the Bot Owner and Sudo Admins can open it.", show_alert=True)
+            return
+            
+        # Agar Owner/Sudo hai, toh commands ki list dikhao
+        sudo_text = (
+            "👑 **OWNER & SUDO COMMANDS**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• `/broadcast <text>` : Message to all active groups\n"
+            "• `/grouplist` : List all monitored groups\n"
+            "• `/getlink <s_no>` : Get invite link of a group\n"
+            "• `/gmsg <s_no> <text>` : Send a direct message\n"
+            "• `/greply <s_no> <msg_id> <txt>` : Reply to a group message\n"
+            "• `/greact <s_no> <msg_id> <emoji>` : Add reaction to message\n"
+            "• `/cleangroups` : Remove dead groups from database\n"
+            "• `/nsfw all on/off` : Global NSFW Control\n\n"
+            "🛠️ **CUSTOM BLOCKLISTS**\n"
+            "• `/addsticker`, `/rmsticker`, `/stickerlist`\n"
+            "• `/addword`, `/rmword`, `/wordlist`\n\n"
+            "👮‍♂️ **ADMIN MANAGEMENT**\n"
+            "• `/addsudo` : Promote user to Sudo\n"
+            "• `/rmsudo` : Demote Sudo Admin\n"
+            "• `/sudolist` : List all Sudo Admins\n"
+        )
+        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
+        
+        await query.edit_message_text(sudo_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try: await query.answer()
+        except: pass
+        return
+    # 👆 YAHAN TAK 👆
+
+    # ==========================================
+    # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
+    # ==========================================
+    is_private = update.effective_chat.type == 'private'
+    
     # ==========================================
     # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
     # ==========================================
@@ -616,6 +684,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("➕ 𝐀𝐝𝐝 𝐭𝐨 𝐆𝐫𝐨𝐮𝐩", url=f"https://t.me/{bot_user.username}?startgroup=true")],
         [InlineKeyboardButton("𝐇𝐞𝐥𝐩❓", callback_data="help_main"), InlineKeyboardButton("📢 Support Channel", url=CHANNEL_URL)],
+        [InlineKeyboardButton("👑 Owner & Sudo Menu 🔒", callback_data="sudo_menu")], # <--- NAYA BUTTON
         [InlineKeyboardButton("𝗖𝗹𝗼𝘀𝗲 🗑", callback_data="delete_msg")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -680,9 +749,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_info = await context.bot.get_me()
     bot_name = bot_info.first_name
 
-    # 2. Fetch Stats from MongoDB
+    # 2. Fetch Stats from MongoDB (Yahan abuse_caught add kiya hai)
     stats = db.get_global_stats() 
-    scanned, bio_caught, media_del, warns_issued, nsfw_blocked, start_timestamp = stats
+    scanned, bio_caught, media_del, warns_issued, nsfw_blocked, abuse_caught, start_timestamp = stats
     
     # 3. Monitored Groups calculation
     groups = db.get_groups()
@@ -692,14 +761,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_start_time = datetime.fromtimestamp(start_timestamp, IST)
     uptime_delta = datetime.now(IST) - bot_start_time
     
-    # Use total_seconds() so days are automatically added into the total hours calculation
     total_seconds = int(uptime_delta.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     
     uptime_str = f"{hours}h {minutes}m {seconds}s"
     
-    # 5. Build the text using HTML
+    # 5. Build the text using HTML (Yahan Abuse Caught line add ki hai)
     text = (
         f"<b>{bot_name}</b>\n\n"
         "📊 <b>SYSTEM STATS</b>\n"
@@ -709,6 +777,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🗑  <b>Media Deleted:</b> <code>{media_del}</code>\n"
         f"⚠️ <b>Warnings Issued:</b> <code>{warns_issued}</code>\n"
         f"🔞 <b>NSFW Blocked:</b> <code>{nsfw_blocked}</code>\n"
+        f"🤬 <b>Abuse Caught:</b> <code>{abuse_caught}</code>\n"
         f"🏘  <b>Monitored Groups:</b> <code>{group_count}</code>\n"
         f"⏳ <b>Uptime:</b> <code>{uptime_str}</code>\n"
     )
@@ -1048,6 +1117,71 @@ async def sudolist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{idx}. `{uid}`\n"
     await update.message.reply_text(text, parse_mode='Markdown')
 
+# ==========================================
+# CUSTOM BLOCKLIST COMMANDS (SUDO/OWNER)
+# ==========================================
+async def addsticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
+    if not update.message.reply_to_message or not update.message.reply_to_message.sticker:
+        await update.message.reply_text("❗ **Usage:** Reply to a sticker to block its entire pack.", parse_mode='Markdown')
+        return
+    set_name = update.message.reply_to_message.sticker.set_name
+    if not set_name:
+        await update.message.reply_text("❌ This sticker doesn't belong to any pack.")
+        return
+    db.add_blocked_sticker(set_name)
+    await update.message.reply_text(f"✅ Sticker pack `{set_name}` blocked globally!", parse_mode='Markdown')
+
+async def rmsticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
+    if not context.args:
+        await update.message.reply_text("❗ **Usage:** `/rmsticker <pack_name>`", parse_mode='Markdown')
+        return
+    set_name = context.args[0]
+    if db.remove_blocked_sticker(set_name):
+        await update.message.reply_text(f"✅ Sticker pack `{set_name}` unblocked.", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("❌ Pack not found in blocklist.")
+
+async def stickerlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
+    packs = db.get_blocked_stickers()
+    if not packs:
+        await update.message.reply_text("📭 Blocked sticker list is empty.")
+        return
+    text = "🚫 **Blocked Sticker Packs:**\n\n" + "\n".join([f"• `{p}`" for p in packs])
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def addword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
+    if not context.args:
+        await update.message.reply_text("❗ **Usage:** `/addword <word>`", parse_mode='Markdown')
+        return
+    word = " ".join(context.args).lower()
+    db.add_blocked_word(word)
+    await update.message.reply_text(f"✅ Word `{word}` blocked globally!", parse_mode='Markdown')
+
+async def rmword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
+    if not context.args:
+        await update.message.reply_text("❗ **Usage:** `/rmword <word>`", parse_mode='Markdown')
+        return
+    word = " ".join(context.args).lower()
+    if db.remove_blocked_word(word):
+        await update.message.reply_text(f"✅ Word `{word}` unblocked.", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("❌ Word not found in blocklist.")
+
+async def wordlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
+    words = db.get_blocked_words()
+    if not words:
+        await update.message.reply_text("📭 Blocked word list is empty.")
+        return
+    text = "🚫 **Blocked Words:**\n\n" + "\n".join([f"• `{w}`" for w in words])
+    await update.message.reply_text(text, parse_mode='Markdown')
+    
+
 async def nsfw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
@@ -1170,8 +1304,18 @@ async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🚫 <b>Anti-Channel</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
 async def check_image_nsfw_api(file_path: str) -> bool:
-    """Sightengine API with Multiple Keys Fallback"""
+    """Sightengine API with Image Format Fix & Multiple Keys Fallback"""
     
+    # 🛠️ FIX 1: Format Mismatch Fix (Convert any WebP/Sticker to strict JPEG)
+    try:
+        from PIL import Image
+        img = Image.open(file_path)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        img.save(file_path, 'JPEG') # Ab ye 100% proper JPG ban gaya
+    except Exception as e:
+        logger.warning(f"Image conversion skipped/failed (Might be video/animated): {e}")
+
     for creds in SIGHTENGINE_KEYS:
         api_user = creds.get("user")
         api_secret = creds.get("secret")
@@ -1200,9 +1344,9 @@ async def check_image_nsfw_api(file_path: str) -> bool:
                 nudity = result.get('nudity', {})
                 
                 # If any of these parameters cross 50% (0.5), it marks it as NSFW
-                if (nudity.get('sexual_activity', 0) > 0.5 or 
-                    nudity.get('sexual_display', 0) > 0.5 or 
-                    nudity.get('erotica', 0) > 0.5):
+                if (nudity.get('sexual_activity', 0) > 0.45 or 
+                    nudity.get('sexual_display', 0) > 0.45 or 
+                    nudity.get('erotica', 0) > 0.45):
                     return True
                 
                 return False # Image is clean
@@ -1410,6 +1554,74 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_text = update.message.text or update.message.caption
     
     # ===================================================================
+    # CUSTOM BLOCKLISTS (Words & Sticker Packs) -> Runs only if NSFW is ON
+    # ===================================================================
+    if nsfw_enabled:
+        blocked_word_found = False
+        blocked_sticker_found = False
+        caught_word = ""
+        
+        # 1. Check Custom Words
+        if msg_text:
+            for word in db.get_blocked_words():
+                # Word match karne ka best tarika
+                if re.search(r'\b' + re.escape(word) + r'\b', msg_text.lower()):
+                    blocked_word_found = True
+                    caught_word = word  # <--- Word ko save kar liya dikhane ke liye
+                    break
+                    
+        # 2. Check Custom Sticker Packs
+        if not blocked_word_found and update.message.sticker and update.message.sticker.set_name:
+            if update.message.sticker.set_name in db.get_blocked_stickers():
+                blocked_sticker_found = True
+                
+        # 🟢 CASE A: AGAR BLOCKED WORD MILA (Abuse)
+        if blocked_word_found:
+            db.update_stat('abuse_caught') # Status me judega
+            try:
+                await update.message.delete() # User ka message turant delete
+            except Exception: pass
+            
+            # Admin ko tag NAHI jayega. User ko us word ke sath warning dikhegi
+            alert_msg = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=f"🚫 {user.mention_html()}, you cannot use the blocked word: <b>{html.escape(caught_word)}</b>", 
+                parse_mode='HTML'
+            )
+            
+            # 👇 Theek 3 second baad bot apna message delete kar dega 👇
+            context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
+            return # Yahan code ruk jayega
+
+        # 🔴 CASE B: AGAR BLOCKED STICKER MILA
+        elif blocked_sticker_found:
+            db.update_stat('nsfw_blocked') # Status me judega
+            try:
+                await update.message.delete()
+            except Exception: pass
+            
+            # Sticker ke liye pehle ki tarah Admin ko tag jayega
+            admin_tags = " ".join([f'<a href="tg://user?id={aid}">👮‍♂️ Admin</a>' for aid in ADMIN_IDS])
+            admin_alert = (
+                f"🚨 <b>Blocked Sticker Detected & Deleted</b>\n\n"
+                f"👤 <b>Sender:</b> {user.mention_html()}\n"
+                f"🔔 {admin_tags}\n"
+            )
+            try:
+                alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
+                # 👇 Admin alert ko 30 second baad delete karne ka timer
+                context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
+            except Exception: pass
+            
+            return # Yahan code ruk jayega
+            
+    # ===================================================================
+    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
+    
+    # ===================================================================
+    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
+    
+    # ===================================================================
     # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
     # Covers Media, Document, Video, Sticker, GIF
     # ===================================================================
@@ -1479,12 +1691,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 try:
-                    await context.bot.send_message(
+                    nsfw_alert_msg = await context.bot.send_message(
                         chat_id=chat_id, 
                         text=admin_alert, 
                         parse_mode='HTML', 
                         disable_notification=True 
                     )
+                    # 👇 NSFW wale admin alert ko bhi 30 second baad delete karne ka timer
+                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
+                except Exception as e:
+                    print(f"Group Alert Error: {e}")
+                    
+                    
                 except Exception as e:
                     print(f"Group Alert Error: {e}")
                     
@@ -1648,7 +1866,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
 
-# ========== BOT STATUS TRACKER ==========
+
 # ========== BOT STATUS TRACKER ==========
 async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Automatically updates the database when the bot is added or kicked from a group."""
@@ -1669,8 +1887,7 @@ async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Agar bot naye group me add hua
         db.add_group(chat.id, chat.title)
         logger.info(f"Bot added to group: {chat.title} ({chat.id})")
-        
-# ========== ADMIN CHECK MIDDLEWARE ==========
+    
 # ========== ADMIN CHECK MIDDLEWARE ==========
 async def enforce_bot_admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1739,6 +1956,13 @@ def main():
     app_bot.add_handler(CommandHandler("sudolist", sudolist_command))
     app_bot.add_handler(CommandHandler("greply", greply_command))
     app_bot.add_handler(CommandHandler("greact", greact_command))
+
+    app_bot.add_handler(CommandHandler("addsticker", addsticker_command))
+    app_bot.add_handler(CommandHandler("rmsticker", rmsticker_command))
+    app_bot.add_handler(CommandHandler("stickerlist", stickerlist_command))
+    app_bot.add_handler(CommandHandler("addword", addword_command))
+    app_bot.add_handler(CommandHandler("rmword", rmword_command))
+    app_bot.add_handler(CommandHandler("wordlist", wordlist_command))
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
     app_bot.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.ChatType.GROUPS, edited_message_handler))
