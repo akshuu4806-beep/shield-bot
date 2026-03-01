@@ -1122,22 +1122,33 @@ async def sudolist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================================
 async def addsticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
-    if not update.message.reply_to_message or not update.message.reply_to_message.sticker:
-        await update.message.reply_text("❗ **Usage:** Reply to a sticker to block its entire pack.", parse_mode='Markdown')
-        return
-    set_name = update.message.reply_to_message.sticker.set_name
+    
+    set_name = None
+    if context.args:
+        set_name = context.args[0]
+    elif update.message.reply_to_message and update.message.reply_to_message.sticker:
+        set_name = update.message.reply_to_message.sticker.set_name
+        
     if not set_name:
-        await update.message.reply_text("❌ This sticker doesn't belong to any pack.")
+        await update.message.reply_text("❗ **Usage:** Reply to a sticker, or type `/addsticker <pack_name>`", parse_mode='Markdown')
         return
+        
     db.add_blocked_sticker(set_name)
     await update.message.reply_text(f"✅ Sticker pack `{set_name}` blocked globally!", parse_mode='Markdown')
 
 async def rmsticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
-    if not context.args:
-        await update.message.reply_text("❗ **Usage:** `/rmsticker <pack_name>`", parse_mode='Markdown')
+    
+    set_name = None
+    if context.args:
+        set_name = context.args[0]
+    elif update.message.reply_to_message and update.message.reply_to_message.sticker:
+        set_name = update.message.reply_to_message.sticker.set_name
+        
+    if not set_name:
+        await update.message.reply_text("❗ **Usage:** Reply to a sticker, or type `/rmsticker <pack_name>`", parse_mode='Markdown')
         return
-    set_name = context.args[0]
+        
     if db.remove_blocked_sticker(set_name):
         await update.message.reply_text(f"✅ Sticker pack `{set_name}` unblocked.", parse_mode='Markdown')
     else:
@@ -1154,21 +1165,35 @@ async def stickerlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def addword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
-    if not context.args:
-        await update.message.reply_text("❗ **Usage:** `/addword <word>`", parse_mode='Markdown')
+    
+    word = ""
+    if context.args:
+        word = " ".join(context.args).lower()
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        word = update.message.reply_to_message.text.strip().lower()
+        
+    if not word:
+        await update.message.reply_text("❗ **Usage:** Reply to a text message, or type `/addword <word>`", parse_mode='Markdown')
         return
-    word = " ".join(context.args).lower()
+        
     db.add_blocked_word(word)
-    await update.message.reply_text(f"✅ Word `{word}` blocked globally!", parse_mode='Markdown')
+    await update.message.reply_text(f"✅ Word/Text `{word}` blocked globally!", parse_mode='Markdown')
 
 async def rmword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id): return
-    if not context.args:
-        await update.message.reply_text("❗ **Usage:** `/rmword <word>`", parse_mode='Markdown')
+    
+    word = ""
+    if context.args:
+        word = " ".join(context.args).lower()
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        word = update.message.reply_to_message.text.strip().lower()
+        
+    if not word:
+        await update.message.reply_text("❗ **Usage:** Reply to a text message, or type `/rmword <word>`", parse_mode='Markdown')
         return
-    word = " ".join(context.args).lower()
+        
     if db.remove_blocked_word(word):
-        await update.message.reply_text(f"✅ Word `{word}` unblocked.", parse_mode='Markdown')
+        await update.message.reply_text(f"✅ Word/Text `{word}` unblocked.", parse_mode='Markdown')
     else:
         await update.message.reply_text("❌ Word not found in blocklist.")
 
@@ -1180,6 +1205,7 @@ async def wordlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = "🚫 **Blocked Words:**\n\n" + "\n".join([f"• `{w}`" for w in words])
     await update.message.reply_text(text, parse_mode='Markdown')
+    
     
 
 async def nsfw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
