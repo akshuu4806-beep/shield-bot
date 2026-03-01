@@ -53,10 +53,13 @@ TOKEN = os.environ.get("TOKEN")
 MONGO_URL = os.environ.get("MONGO_URL")
 ADMIN_IDS = [8507307665]
 IST = pytz.timezone('Asia/Kolkata')
-# NSFW Classifier
-# Purana nsfw_classifier = pipeline(...) hata kar ye likhein:
-HF_TOKEN = os.environ.get("HF_TOKEN")
-NSFW_API_URL = "https://api-inference.huggingface.co/models/Falconsai/nsfw_image_detection"
+# Sightengine Multiple API Keys Setup
+# Add your keys in Render Environment Variables as SE_USER_1, SE_SECRET_1, etc.
+SIGHTENGINE_KEYS = [
+    {"user": os.environ.get("SE_USER_1"), "secret": os.environ.get("SE_SECRET_1")},
+    {"user": os.environ.get("SE_USER_2"), "secret": os.environ.get("SE_SECRET_2")},
+    {"user": os.environ.get("SE_USER_3"), "secret": os.environ.get("SE_SECRET_3")}
+]
 
 # ========== DATABASE CLASS ==========
 class PersistentDB:
@@ -1167,69 +1170,59 @@ async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🚫 <b>Anti-Channel</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
 async def check_image_nsfw_api(file_path: str) -> bool:
-    """Hugging Face API with Auto-Retry for Sleeping Models"""
-    if not HF_TOKEN:
-        logger.error("HF_TOKEN is missing!")
-        return False
-        
-    try:
-        with open(file_path, "rb") as f:
-            image_data = f.read()
-        
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        
-        # Simple API call function (Sirf request bhejega)
-        def call_api():
-            return requests.post(NSFW_API_URL, headers=headers, data=image_data, timeout=20)
-            
-        max_retries = 3  # Bot maximum 3 baar try karega
-        
-        for attempt in range(max_retries):
-            # API ko background thread mein call karein
-            response = await asyncio.to_thread(call_api)
-            
-            try:
-                results = response.json()
-            except Exception:
-                logger.error(f"Failed to parse JSON. HTTP {response.status_code} for URL: {NSFW_API_URL}. Raw: {response.text}")
-                return False
-                
-            # Agar model sleep mode mein hai (Loading error)
-            if isinstance(results, dict) and 'error' in results:
-                error_msg = results['error'].lower()
-                
-                # Check agar error loading ki wajah se hai
-                if 'is currently loading' in error_msg or 'estimated_time' in results:
-                    # API khud batati hai kitna wait karna hai (default 10s rakh lete hain)
-                    wait_time = results.get('estimated_time', 10.0)
-                    
-                    # Maximum 15 seconds wait karenge, taaki bot hang na ho
-                    wait_time = min(wait_time, 15.0) 
-                    
-                    logger.info(f"HF Model sleep me hai. {wait_time}s wait kar raha hu... (Attempt {attempt+1}/{max_retries})")
-                    await asyncio.sleep(wait_time)
-                    continue  # Loop wapas upar jayega aur firse try karega
-                else:
-                    # Har model ke labels alag hote hain, toh sabko cover kar lete hain
-                    nsfw_labels = ['nsfw', 'porn', 'hentai', 'sexy']
-                    if result.get('label', '').lower() in nsfw_labels and result.get('score', 0) > 0.60:
-                        return True
-            
-            # Agar successful response aaya (List format me)
-            if isinstance(results, list):
-                for result in results:
-                    # Agar label 'nsfw' hai aur confidence 60% se zyada hai
-                    if result.get('label') == 'nsfw' and result.get('score', 0) > 0.60:
-                        return True
-                return False # Image clean hai
-                
-        logger.error("Model load hone me time lag gaya. Skipping NSFW check for this image.")
-        return False
+    """Sightengine API with Multiple Keys Fallback"""
+    
+    for creds in SIGHTENGINE_KEYS:
+        api_user = creds.get("user")
+        api_secret = creds.get("secret")
 
-    except Exception as e:
-        logger.error(f"NSFW API Exception: {e}")
-        
-    return False
+        # Skip if environment variables are not set properly
+        if not api_user or not api_secret:
+            continue 
+
+        try:
+            def call_api():
+                with open(file_path, 'rb') as f:
+                    files = {'media': f}
+                    params = {
+                        'models': 'nudity-2.0',
+                        'api_user': api_user,
+                        'api_secret': api_secret
+                    }
+                    # Sightengine API Endpoint
+                    return requests.post('https://api.sightengine.com/1.0/check.json', files=files, data=params, timeout=20)
+
+            # Call API in a background thread to prevent bot blocking
+            response = await asyncio.to_thread(call_api)
+            result = response.json()
+
+            if result.get('status') == 'success':
+                nudity = result.get('nudity', {})
+                
+                # If any of these parameters cross 50% (0.5), it marks it as NSFW
+                if (nudity.get('sexual_activity', 0) > 0.5 or 
+                    nudity.get('sexual_display', 0) > 0.5 or 
+                    nudity.get('erotica', 0) > 0.5):
+                    return True
+                
+                return False # Image is clean
+            
+            # If the current API key is out of credits/limits
+            elif result.get('error', {}).get('type') == 'limit_reached':
+                logger.warning(f"Sightengine key {api_user} limit reached. Trying next key...")
+                continue # Moves to the next key in the list
+                
+            else:
+                logger.error(f"Sightengine API error: {result}")
+                continue # Try the next key on other errors
+
+        except Exception as e:
+            logger.error(f"Sightengine exception with key {api_user}: {e}")
+            continue # If network fails, try the next key
+
+    logger.error("All Sightengine API keys failed or are out of limits.")
+    return False # Fallback to False if all keys are dead
+    
     
 async def greply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Replies to a specific message in a group."""
@@ -1475,11 +1468,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                         except:
                             pass
-                
-                # 2. Add warning to database
-                db.update_stat('warnings_issued')
-                db.add_warning(user.id)
-                                
+                                                
                 # 3. Silently Tag Admins in the Group
                 admin_tags = " ".join([f'<a href="tg://user?id={aid}">👮‍♂️ Admin</a>' for aid in ADMIN_IDS])
                 
