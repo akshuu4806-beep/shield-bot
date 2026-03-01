@@ -364,33 +364,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("⚠️ Please give me delete messages permission.", show_alert=True)
         return
         
-    # 2. HELP MENU (Har koi use kar sakta hai)
+    # 2. HELP MENU (Button Click Logic)
     if query.data == "help_main":
         is_private = update.effective_chat.type == 'private'
 
         if is_private:
             help_text = (
-                "🤖 **BOT COMMANDS MENU**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "👤 **USER COMMANDS**\n"
-                "• `/start` : Check bot status\n"
-                "• `/status` : Check security stats\n"
-                "• `/help` : Show this menu\n\n"
-                "🛠 **ADMIN COMMANDS**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "• `/antichannel on/off` : Stop channel posts\n"
-                "• `/config` : Warn/Mute limits\n"
-                "• `/delay <min>` : Media auto-delete\n"
-                "• `/approve` : Whitelist a user\n"
-                "• `/unapprove` : Remove from whitelist\n"
-                "• `/aplist` : List whitelist users\n"
-            )
+        "🤖 **BOT COMMANDS MENU**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👤 **USER COMMANDS**\n"
+        "• `/start` : Check bot status\n"
+        "• `/status` : Check security stats\n"
+        "• `/help` : Show this menu\n\n"
+        "🛡️ **ADMIN SECURITY**\n"
+        "• `/nsfw on/off` : AI Media Filter\n"
+        "• `/antichannel on/off` : Stop channel posts\n"
+        "• `/config` : Set warn limits & actions\n"
+        "• `/delay <min>` : Media auto-delete timer\n\n"
+        "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
+        "• `/blockword` : Block a word locally\n"
+        "• `/unblockword` : Remove local word block\n"
+        "• `/blocksticker` : Block sticker pack locally\n"
+        "• `/unblocksticker` : Unblock pack locally\n"
+        "• `/listlocal` : View local blocked list\n\n"
+        "👥 **USER MANAGEMENT**\n"
+        "• `/approve` : Whitelist a user\n"
+        "• `/unapprove` : Remove from whitelist\n"
+        "• `/aplist` : List whitelist users\n"
+    )
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
             await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         else:
             bot_info = await context.bot.get_me()
+            user_name = update.effective_user.first_name
             dm_url = f"https://t.me/{bot_info.username}?start=help"
-            group_text = "💡 **Help Menu**\n\nHi, please click the button below to get the help menu in your DMs.."
+            group_text = f"💡 **Hey {html.escape(user_name)}!**\n\nPlease click the button below to get the help menu in your DMs.."
             keyboard = [
                 [InlineKeyboardButton("💬 Open DM", url=dm_url)],
                 [InlineKeyboardButton("⬅️ Back", callback_data="back_to_start"), InlineKeyboardButton("🗑 Close", callback_data="delete_msg")]
@@ -670,15 +678,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 3. Universal Message & Keyboard
     CHANNEL_URL = "https://t.me/+rjE5xZlIK4U3ODA1"
+    user_name = update.effective_user.first_name
     text = (
-        f"👋 **𝗪𝗲𝗹𝗰𝗼𝗺𝗲 𝘁𝗼 {bot_user.first_name}!**\n\n"
-        "𝗜 𝗮𝗺 𝗮𝗻 𝗮𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝘀𝗲𝗰𝘂𝗿𝗶𝘁𝘆 𝗯𝗼𝘁 𝗱𝗲𝘀𝗶𝗴𝗻𝗲𝗱 𝘁𝗼 𝗽𝗿𝗼𝘁𝗲𝗰𝘁 𝘆𝗼𝘂𝗿 𝗴𝗿𝗼𝘂𝗽.\n\n"
-        "🗑 **𝗠𝗲𝗱𝗶𝗮 𝗖𝗹𝗲𝗮𝗻𝗲𝗿**: Auto-deletes media after a set time.\n"
+        f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {html.escape(user_name)}!**\n\n" 
+        f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲 𝘁𝗼 {bot_user.first_name}!**\n\n"
+        "𝗜 𝗮𝗺 𝗮𝗻 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜-𝗣𝗼𝘄𝗲𝗿𝗲𝗱 𝗦𝗲𝗰𝘂𝗿𝗶𝘁𝘆 𝗦𝘆𝘀𝘁𝗲𝗺, "
+        "𝗱𝗲𝘀𝗶𝗴𝗻𝗲𝗱 𝘁𝗼 𝗸𝗲𝗲𝗽 𝘆𝗼𝘂𝗿 𝗰𝗵𝗮𝘁𝘀 𝗰𝗹𝗲𝗮𝗻, 𝘀𝗮𝗳𝗲, 𝗮𝗻𝗱 𝗽𝗿𝗼𝗳𝗲𝘀𝘀𝗶𝗼𝗻𝗮𝗹. ⚡\n\n"
+        "✨ **𝗞𝗲𝘆 𝗦𝗵𝗶𝗲𝗹𝗱𝘀:**\n"
+        "🔞 **𝗔𝗜 𝗡𝗦𝗙𝗪 𝗚𝘂𝗮𝗿𝗱**: Scans & deletes explicit media using AI.\n"
+        "🤬 **𝗔𝗯𝘂𝘀𝗲 𝗦𝗵𝗶𝗲𝗹𝗱**: Instantly removes abusive words.\n"
+        "🚫 **𝗔𝗻𝘁𝗶-𝗟𝗶𝗻𝗸**: Blocks URLs instantly.\n"
+        "🛡️ **𝗕𝗶𝗼 𝗚𝘂𝗮𝗿𝗱**: Scan bios for links and restrict users.\n"
+        "🔒 **𝗔𝗻𝘁𝗶-𝗖𝗵𝗮𝗻𝗻𝗲𝗹**: Blocks anonymous channel posts.\n"
         "✏️ **𝗘𝗱𝗶𝘁 𝗚𝘂𝗮𝗿𝗱**: Deletes edited messages to prevent spam.\n"
-        "🚫 **𝗔𝗻𝘁𝗶-𝗟𝗶𝗻𝗸**: Removes URLs instantly.\n"
-        "🛡️ **𝐁𝐢𝐨 𝐆𝐮𝐚𝐫𝐝**: Scan bios for links and restrict users.\n"
-        "🔒 **𝐀𝐧𝐭𝐢-𝐂𝐡𝐚𝐧𝐧𝐞𝐥**: Blocks anonymous posts sent via Telegram Channels.\n"
-        "🔞 **𝐍𝐒𝐅𝐖 𝐁𝐥𝐨𝐜𝐤𝐞𝐝**: Filter unwanted object.\n\n"
+        "🤖 **𝗔𝗻𝘁𝗶-𝗕𝗼𝘁**: Automatically kicks malicious bots (except admins).\n\n"
+        "💡 _Click the buttons below to explore more!_"
     )
     
     keyboard = [
@@ -705,11 +719,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/start` : Check bot status\n"
         "• `/status` : Check security stats\n"
         "• `/help` : Show this menu\n\n"
-        "🛠 **ADMIN COMMANDS**\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🛡️ **ADMIN SECURITY**\n"
+        "• `/nsfw on/off` : AI Media Filter\n"
         "• `/antichannel on/off` : Stop channel posts\n"
-        "• `/config <warn> <hrs>` : Warn/Mute limits\n"
-        "• `/delay <min>` : Media auto-delete\n"
+        "• `/config` : Set warn limits & actions\n"
+        "• `/delay <min>` : Media auto-delete timer\n\n"
+        "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
+        "• `/blockword` : Block a word locally\n"
+        "• `/unblockword` : Remove local word block\n"
+        "• `/blocksticker` : Block sticker pack locally\n"
+        "• `/unblocksticker` : Unblock pack locally\n"
+        "• `/listlocal` : View local blocked list\n\n"
+        "👥 **USER MANAGEMENT**\n"
         "• `/approve` : Whitelist a user\n"
         "• `/unapprove` : Remove from whitelist\n"
         "• `/aplist` : List whitelist users\n"
@@ -724,26 +745,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # If the user uses /help in a group
     bot_info = await context.bot.get_me()
+    user_name = update.effective_user.first_name
     dm_url = f"https://t.me/{bot_info.username}?start=help"
     
     group_text = (
-        "💡 **Help Menu**\n\n"
-        "Hi, please click the button below to get the help menu in your DMs."
+        f"💡 **Hey {html.escape(user_name)}!**\n\n"
+        "I've sent the **Help Menu** to your DMs to keep this group clean. "
+        "Click the button below to see it! 🚀"
     )
     
-    # Creates the Open DM button, and a manual Delete button
     keyboard = [
         [InlineKeyboardButton("💬 Open DM", url=dm_url)],
         [InlineKeyboardButton("🗑 Close", callback_data="delete_msg")]
     ]
     
-    # Sends the message in the group permanently (no auto-delete)
-    await update.message.reply_text(
-        group_text, 
-        reply_markup=InlineKeyboardMarkup(keyboard), 
-        parse_mode='Markdown'
-    )
-        
+    await update.message.reply_text(group_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. Fetch the bot's name
     bot_info = await context.bot.get_me()
