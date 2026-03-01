@@ -79,7 +79,9 @@ class PersistentDB:
         # Add these two lines inside def __init__(self):
         self.local_blocked_words = self.db["local_blocked_words"]
         self.local_blocked_stickers = self.db["local_blocked_stickers"]
-
+        # 'def __init__(self):' ke andar ye line add karein:
+        self.gbans = self.db["gbans"]
+        
     def _init_stats(self):
         stats = self.global_stats.find_one({"_id": 1})
         if not stats:
@@ -239,6 +241,24 @@ class PersistentDB:
 
     def get_local_stickers(self, chat_id):
         return [s["set_name"] for s in self.local_blocked_stickers.find({"chat_id": chat_id})]
+
+    # ==========================================
+    # GBAN METHODS (Isko PersistentDB class ke kisi bhi function ke niche paste karein)
+    # ==========================================
+    def add_gban(self, user_id, reason="No reason"):
+        self.gbans.update_one({"_id": user_id}, {"$set": {"reason": reason}}, upsert=True)
+
+    def remove_gban(self, user_id):
+        return self.gbans.delete_one({"_id": user_id}).deleted_count > 0
+
+    def is_gbanned(self, user_id):
+        row = self.gbans.find_one({"_id": user_id})
+        if row:
+            return True, row.get("reason", "No reason")
+        return False, ""
+
+    def get_gbans(self):
+        return [(u["_id"], u.get("reason", "No reason")) for u in self.gbans.find()]
 
 db = PersistentDB()
 
@@ -478,6 +498,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/addsudo` : Promote user to Sudo\n"
             "• `/rmsudo` : Demote Sudo Admin\n"
             "• `/sudolist` : List all Sudo Admins\n"
+            "• `/gban` : Ban globally\n"
+            "• `/ungban` : Unban globally\n"
+            "• `/gbanlist` : List of gban user\n"
         )
         keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
         
@@ -1254,7 +1277,74 @@ async def wordlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🚫 **Blocked Words:**\n\n" + "\n".join([f"• `{w}`" for w in words])
     await update.message.reply_text(text, parse_mode='Markdown')
     
+ # ==========================================
+# GBAN COMMANDS (OWNER & SUDO ONLY)
+# ==========================================
+async def gban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ Only Owner and Sudo Admins can use this command.")
+        return
+
+    target_id, target_name, reason = await extract_target(update, context)
+    if not target_id:
+        await update.message.reply_text(reason) # extract_target khud error msg return karta hai
+        return
+
+    # Owner ya Sudo ko gban karne se rokna
+    if target_id in ADMIN_IDS or db.is_sudo(target_id):
+        await update.message.reply_text("❌ You cannot GBan an Admin or Sudo user.")
+        return
+
+    db.add_gban(target_id, reason)
     
+    # Current group se turant ban karne ki koshish
+    if update.effective_chat.type in ['group', 'supergroup']:
+        try:
+            await context.bot.ban_chat_member(update.effective_chat.id, target_id)
+        except:
+            pass
+
+    safe_name = html.escape(target_name or str(target_id))
+    await update.message.reply_text(f"🌍 **GBANNED SUCCESSFULLY!**\n\n👤 **User:** {safe_name} (`{target_id}`)\n📝 **Reason:** {reason}\n\n_This user will now be banned from all groups where I am admin._", parse_mode='Markdown')
+
+async def ungban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ Only Owner and Sudo Admins can use this command.")
+        return
+
+    target_id, target_name, reason = await extract_target(update, context)
+    if not target_id:
+        await update.message.reply_text(reason)
+        return
+
+    if db.remove_gban(target_id):
+        safe_name = html.escape(target_name or str(target_id))
+        await update.message.reply_text(f"✅ **UN-GBANNED!**\n\n👤 **User:** {safe_name} (`{target_id}`) has been removed from the Global Ban list.", parse_mode='Markdown')
+    else:
+        await update.message.reply_text(f"❌ User `{target_id}` is not globally banned.", parse_mode='Markdown')
+
+async def gbanlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ Only Owner and Sudo Admins can use this command.")
+        return
+
+    gbans = db.get_gbans()
+    if not gbans:
+        await update.message.reply_text("📭 GBan list is empty.")
+        return
+
+    text = "🌍 **Globally Banned Users:**\n\n"
+    for idx, (uid, reason) in enumerate(gbans, 1):
+        text += f"{idx}. `{uid}` - {reason}\n"
+    
+    # Agar list bahut lambi ho jaye toh limit lagane ke liye
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (List too long, truncated)"
+
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 async def nsfw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1564,15 +1654,8 @@ async def blocksticker_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
         
     db.add_local_sticker(chat_id, set_name)
-    msg = await update.message.reply_text(f"✅ Sticker pack `{set_name}` ab **sirf is group ke liye** block ho gaya hai.", parse_mode='Markdown')
+    msg = await update.message.reply_text(f"✅ Sticker pack `{set_name}` blocked in the group.", parse_mode='Markdown')
     context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
-
-    # 👇 NAYI LINE: Jis kharab sticker par reply kiya tha, usko turant delete karna
-    if is_reply:
-        try:
-            await update.message.reply_to_message.delete()
-        except Exception:
-            pass
 
 async def unblockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -1595,7 +1678,7 @@ async def unblockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
         
     if db.remove_local_word(chat_id, word):
-        msg = await update.message.reply_text(f"✅ Word `{word}` ko is group mein allow kar diya gaya hai.", parse_mode='Markdown')
+        msg = await update.message.reply_text(f"✅ Word `{word}` allowed in the group.", parse_mode='Markdown')
     else:
         msg = await update.message.reply_text("❌ Ye word yahan ki blocklist mein nahi mila.")
     context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
@@ -1621,9 +1704,9 @@ async def unblocksticker_command(update: Update, context: ContextTypes.DEFAULT_T
         return
         
     if db.remove_local_sticker(chat_id, set_name):
-        msg = await update.message.reply_text(f"✅ Sticker pack `{set_name}` ko is group mein allow kar diya gaya hai.", parse_mode='Markdown')
+        msg = await update.message.reply_text(f"✅ Sticker pack `{set_name}` allowed in the group.", parse_mode='Markdown')
     else:
-        msg = await update.message.reply_text("❌ Sticker pack yahan ki blocklist mein nahi mila.")
+        msg = await update.message.reply_text("❌ This Sticker pack is not in list .")
     context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
 
 async def listlocal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1702,6 +1785,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     user = update.message.from_user
     chat_id = update.effective_chat.id
+
+    # 👇 GBAN AUTO-KICK CHECK 👇
+    is_gbanned, gban_reason = db.is_gbanned(user.id)
+    if is_gbanned:
+        try:
+            await update.message.delete() # Unka message uda do
+            await context.bot.ban_chat_member(chat_id, user.id) # Unko group se ban kar do
+        except:
+            pass
+        return # Code aage run hone se rok do
+    # 👆 GBAN CHECK END 👆
     
     # UPDATE SCANNED STAT
     db.update_stat('scanned')
@@ -1833,11 +1927,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
             
             # Sticker ke liye pehle ki tarah Admin ko tag jayega
-            admin_tags = " ".join([f'<a href="tg://user?id={aid}">👮‍♂️ Admin</a>' for aid in ADMIN_IDS])
+            admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
             admin_alert = (
                 f"🚨 <b>Blocked Sticker Detected & Deleted</b>\n\n"
                 f"👤 <b>Sender:</b> {user.mention_html()}\n"
-                f"🔔 {admin_tags}\n"
+                f"{admin_tags}"  # Ye invisible tags message ke last me chhupe rahenge
             )
             try:
                 alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
@@ -1908,12 +2002,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             pass
                                                 
                 # 3. Silently Tag Admins in the Group
-                admin_tags = " ".join([f'<a href="tg://user?id={aid}">👮‍♂️ Admin</a>' for aid in ADMIN_IDS])
+                admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
                 
                 admin_alert = (
                     f"🚨 <b>NSFW Content Detected Please Take Action</b>\n\n"
-                    f"👤 <b>Sender:</b> {user.mention_html()}\n"
-                    f"🔔 {admin_tags}\n"
+                    f"👤 <b>Sender:</b> {user.mention_html()}"
+                    f"{admin_tags}"
                 )
                 
                 try:
@@ -2045,14 +2139,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
                 
-# ========== ANTI-BOT SYSTEM ==========
+# ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members: return
     
     chat_id = update.effective_chat.id
     adder = update.message.from_user
     
-    # Bypass check for Admins and Approved users
+    # Bypass check for Admins and Approved users (For Anti-Bot)
     is_adder_admin = False
     if adder.id in ADMIN_IDS:
         is_adder_admin = True
@@ -2063,35 +2157,61 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 is_adder_admin = True
         except: pass
         
-    if is_adder_admin or db.is_allowed(adder.id):
-        return 
+    is_adder_exempt = is_adder_admin or db.is_allowed(adder.id)
         
-    # Check if any new member is a bot
+    # 👇 EK HI LOOP MEIN DONO CHECKS HONGE 👇
     for new_member in update.message.new_chat_members:
-        if new_member.is_bot and new_member.id != context.bot.id:
+        
+        # 1. NAYA GBAN JOIN CHECK (Priority par chalega)
+        is_gbanned, _ = db.is_gbanned(new_member.id)
+        if is_gbanned:
             try:
-                # 1. KICK the bot instantly (ban followed by immediate unban)
+                # Pehle user ko ban karo
                 await context.bot.ban_chat_member(chat_id, new_member.id)
-                await context.bot.unban_chat_member(chat_id, new_member.id)
                 
-                # 2. Send the exact warning notification requested for the user
-                alert_text = (
-                    f"{adder.mention_html()} you cannot add bots in the group otherwise you restricted from this chat ."
+                # Group mein message bhejo
+                alert_msg = await context.bot.send_message(
+                    chat_id, 
+                    f"🚨 {new_member.mention_html()} was globally banned and has been removed.\n\n"
+                    "**Reason:** you are global ban contact bot owner for free (@anurag_9X)",
+                    parse_mode='HTML'
                 )
-                
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🗑 Delete Message", callback_data="delete_msg")]
-                ])
-                await context.bot.send_message(chat_id, alert_text, parse_mode='HTML', reply_markup=kb)
-                
-            except Exception as e:
-                # When the bot lacks ban permission, send exactly this message:
-                error_msg = "Bot cannot be kicked because I have not permission to kick."
-                try:
-                    await context.bot.send_message(chat_id, error_msg)
-                except:
-                    pass
+                # Group clean rakhne ke liye ye alert 10 sec baad delete
+                context.job_queue.run_once(delete_msg_job, 10, chat_id=chat_id, data=alert_msg.message_id)
 
+                # User ko DMs mein private message bhejo
+                try:
+                    await context.bot.send_message(
+                        new_member.id,
+                        "you are global ban contact bot owner for free"
+                    )
+                except Exception:
+                    pass # Agar block kiya hoga toh ignore karega
+            except Exception: 
+                pass
+            continue # Agar ye GBanned hai, toh agli bot checking mat karo, sidha next member par jao
+
+        # 2. ANTI-BOT CHECK (Agar join karne wala GBanned nahi hai, tab ye check hoga)
+        # Ye tabhi check hoga jab add karne wala admin ya approved nahi hai
+        if not is_adder_exempt:
+            if new_member.is_bot and new_member.id != context.bot.id:
+                try:
+                    # KICK the bot instantly (ban followed by immediate unban)
+                    await context.bot.ban_chat_member(chat_id, new_member.id)
+                    await context.bot.unban_chat_member(chat_id, new_member.id)
+                    
+                    # Send the exact warning notification requested for the user
+                    alert_text = f"{adder.mention_html()} you cannot add bots in the group otherwise you restricted from this chat ."
+                    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete Message", callback_data="delete_msg")]])
+                    await context.bot.send_message(chat_id, alert_text, parse_mode='HTML', reply_markup=kb)
+                    
+                except Exception as e:
+                    # When the bot lacks ban permission
+                    error_msg = "Bot cannot be kicked because I have not permission to kick."
+                    try:
+                        await context.bot.send_message(chat_id, error_msg)
+                    except:
+                        pass   
 
 # ========== BOT STATUS TRACKER ==========
 async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2196,6 +2316,11 @@ def main():
     app_bot.add_handler(CommandHandler("blocksticker", blocksticker_command))
     app_bot.add_handler(CommandHandler("unblocksticker", unblocksticker_command))
     app_bot.add_handler(CommandHandler("listlocal", listlocal_command))
+
+    # Add these lines inside your main() function
+    app_bot.add_handler(CommandHandler("gban", gban_command))
+    app_bot.add_handler(CommandHandler("ungban", ungban_command))
+    app_bot.add_handler(CommandHandler("gbanlist", gbanlist_command))
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
     app_bot.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.ChatType.GROUPS, edited_message_handler))
