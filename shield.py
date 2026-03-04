@@ -535,100 +535,62 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
         config = db.get_config(chat_id)
         warn_limit, action = config[1], config[2]
+        
+        # Current state fetch kiya
+        edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
 
-        # 1. Action: Warn Limit Change (Instant Update)
+        # 1. Action: Warn Limit Change
         if query.data.startswith("setwarn_"):
             limit = int(query.data.split("_")[1])
             if limit == warn_limit:
                 await query.answer("✅ Already selected!")
                 return
-            
             db.set_warn_limit(chat_id, limit)
-            warn_limit = limit # Update local variable instantly
-            
-            # Rebuild keyboard instantly with the new tick
-            def get_btn(num):
-                txt = f"✅ {num}" if num == warn_limit else str(num)
-                return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
-            
-            keyboard = [
-                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
-                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
-                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
-            ]
-            try:
-                # edit_message_reply_markup is faster than edit_message_text for just button changes
-                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-            except Exception: pass
+            warn_limit = limit 
             await query.answer(f"✅ Warning limit changed to {limit}")
-            return
+            query.data = "cfg_main" # Niche wale cfg_main block ko trigger karega
 
-        # 2. Action: Mute/Ban Change (Instant Update)
-        if query.data in ["cfg_mute", "cfg_ban"]:
+        # 2. Action: Mute/Ban Change
+        elif query.data in ["cfg_mute", "cfg_ban"]:
             new_action = query.data.split("_")[1]
             if new_action == action:
                 await query.answer("✅ Already selected!")
                 return
-            
             db.set_action(chat_id, new_action)
-            action = new_action # Update local variable instantly
-            
-            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-            
-            text = f"⚙️ **Group Configuration**\n\n⚠️ **Limit:** {warn_limit}\n🔨 **Action:** {action.upper()}"
-            keyboard = [
-                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
-            ]
-            try:
-                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            except Exception: pass
+            action = new_action 
             await query.answer(f"✅ Punishment set to {action.upper()}")
-            return
+            query.data = "cfg_main"
 
-        # 3. Menu: Render Warn Limits Page
+        # 3. Action: Edit Guard Toggle (Instant Green/Red Tick)
+        elif query.data == "cfg_edit":
+            edit_guard_enabled = not edit_guard_enabled # State ko palat diya
+            db.set_edit_guard(chat_id, edit_guard_enabled)
+            await query.answer(f"✅ Edit Guard turned {'ON' if edit_guard_enabled else 'OFF'}")
+            query.data = "cfg_main"
+
+        # 4. Menu: Render Warn Limits Page
         if query.data == "cfg_warn":
             def get_btn(num):
                 txt = f"✅ {num}" if num == warn_limit else str(num)
                 return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
-                
+            
             keyboard = [
                 [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
                 [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
                 [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
             ]
-            try:
-                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            try: await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             except Exception: pass
-            await query.answer()
             return
 
-        # 👇 NEW ACTION: Edit Guard Toggle (Instant Update)
-        if query.data == "cfg_edit":
-            current_state = db.is_edit_guard_enabled(chat_id)
-            new_state = not current_state # Toggle it
-            db.set_edit_guard(chat_id, new_state)
-            
-            # Send an alert to the user clicking it
-            await query.answer(f"✅ Edit Guard turned {'ON' if new_state else 'OFF'}")
-            
-            # Redirect to cfg_main to refresh the menu with the new tick
-            query.data = "cfg_main" 
-
-        # 4. Menu: Render Main Config Page
+        # 5. Menu: Render Main Config Page (Ek hi jagah sab update hoga)
         if query.data == "cfg_main":
-            config = db.get_config(chat_id)
-            warn_limit, action = config[1], config[2]
-            
-            # 👇 Fetch the latest Edit Guard status for the refresh
-            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
-            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
-            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-            
             mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
             ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+            
+            # Edit Guard ke liye Tick aur Cross lagana
+            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
+            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
             
             text = (
                 f"⚙️ **Group Configuration**\n\n"
@@ -640,18 +602,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [
                 [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
                 [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")], # <--- Added button here too
+                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
             ]
-            try:
-                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            try: await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             except Exception: pass
-            
-            # Only answer if it wasn't already answered by the cfg_edit block above
-            try: await query.answer()
-            except: pass
             return
 
+    # --- OTHER ADMIN BUTTONS (Approve, Unban, Unmute) ---
     # --- OTHER ADMIN BUTTONS (Approve, Unban, Unmute) ---
     try: await query.answer() 
     except: pass
@@ -1364,7 +1322,7 @@ async def gban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target_id, target_name, reason = await extract_target(update, context)
     if not target_id:
-        await update.message.reply_text(reason) # extract_target khud error msg return karta hai
+        await update.message.reply_text(reason) 
         return
 
     # Owner ya Sudo ko gban karne se rokna
@@ -1373,6 +1331,17 @@ async def gban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     db.add_gban(target_id, reason)
+    
+    # 👇 NAYI LINE: User ko turant DM bhejna 👇
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"🚨 **GLOBAL BAN NOTICE** 🚨\n\nYou have been Globally Banned from all groups managed by this bot.\n\n📝 **Reason:** {reason}\n\n_Contact the bot owner (@anurag_9X) if you think this is a mistake._",
+            parse_mode='Markdown'
+        )
+    except Exception:
+        pass # Agar user ne bot block kiya hoga ya start nahi kiya hoga, toh ignore karega
+    # 👆 NAYI LINE END 👆
     
     # Current group se turant ban karne ki koshish
     if update.effective_chat.type in ['group', 'supergroup']:
@@ -1396,11 +1365,22 @@ async def ungban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if db.remove_gban(target_id):
+        # 👇 NAYI LINE: User ko turant DM me Unban ka message bhejna 👇
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text="✅ **UNBAN NOTICE** ✅\n\nYour Global Ban has been lifted! You can now join the groups again.",
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass # Ignore karega agar DM nahi ja sakta
+        # 👆 NAYI LINE END 👆
+        
         safe_name = html.escape(target_name or str(target_id))
         await update.message.reply_text(f"✅ **UN-GBANNED!**\n\n👤 **User:** {safe_name} (`{target_id}`) has been removed from the Global Ban list.", parse_mode='Markdown')
     else:
         await update.message.reply_text(f"❌ User `{target_id}` is not globally banned.", parse_mode='Markdown')
-
+        
 async def gbanlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
