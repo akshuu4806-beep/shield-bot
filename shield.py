@@ -539,6 +539,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Current state fetch kiya
         edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
 
+        # 👇 NAYA VARIABLE (Taaki read-only error na aaye)
+        current_action = query.data
+        
         # 1. Action: Warn Limit Change
         if query.data.startswith("setwarn_"):
             limit = int(query.data.split("_")[1])
