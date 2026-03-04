@@ -211,6 +211,15 @@ class PersistentDB:
             else:
                 self.warnings.update_one({"_id": user_id}, {"$set": {"count": new_count}})
 
+    def set_edit_guard(self, chat_id, enabled):
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"edit_guard": 1 if enabled else 0}}, upsert=True)
+
+    def is_edit_guard_enabled(self, chat_id):
+        s = self.group_config.find_one({"_id": chat_id})
+        if s and "edit_guard" in s:
+            return s["edit_guard"] == 1
+        return True # Default is ON
+    
     # ==========================================
     # LOCAL BLOCKLIST METHODS
     # ==========================================
@@ -434,6 +443,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛡️ **ADMIN SECURITY**\n"
         "• `/nsfw on/off` : AI Media Filter\n"
         "• `/antichannel on/off` : Stop channel posts\n"
+        "• `/edit on/off` : Toggle edited messages\n" # <--- ADD THIS LINE        
         "• `/config` : Set warn limits & actions\n"
         "• `/delay <min>` : Media auto-delete timer\n\n"
         "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
@@ -595,21 +605,51 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer()
             return
 
+        # 👇 NEW ACTION: Edit Guard Toggle (Instant Update)
+        if query.data == "cfg_edit":
+            current_state = db.is_edit_guard_enabled(chat_id)
+            new_state = not current_state # Toggle it
+            db.set_edit_guard(chat_id, new_state)
+            
+            # Send an alert to the user clicking it
+            await query.answer(f"✅ Edit Guard turned {'ON' if new_state else 'OFF'}")
+            
+            # Redirect to cfg_main to refresh the menu with the new tick
+            query.data = "cfg_main" 
+
         # 4. Menu: Render Main Config Page
         if query.data == "cfg_main":
+            config = db.get_config(chat_id)
+            warn_limit, action = config[1], config[2]
+            
+            # 👇 Fetch the latest Edit Guard status for the refresh
+            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
+            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
+            
             mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
             ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
             
-            text = f"⚙️ **Group Configuration**\n\n⚠️ **Limit:** {warn_limit}\n🔨 **Action:** {action.upper()}"
+            text = (
+                f"⚙️ **Group Configuration**\n\n"
+                f"⚠️ **Limit:** {warn_limit}\n"
+                f"🔨 **Action:** {action.upper()}\n"
+                f"✏️ **Edit Guard:** {edit_status}"
+            )
+            
             keyboard = [
                 [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
                 [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
+                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")], # <--- Added button here too
                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
             ]
             try:
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             except Exception: pass
-            await query.answer()
+            
+            # Only answer if it wasn't already answered by the cfg_edit block above
+            try: await query.answer()
+            except: pass
             return
 
     # --- OTHER ADMIN BUTTONS (Approve, Unban, Unmute) ---
@@ -776,6 +816,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛡️ **ADMIN SECURITY**\n"
         "• `/nsfw on/off` : AI Media Filter\n"
         "• `/antichannel on/off` : Stop channel posts\n"
+        "• `/edit on/off` : Toggle edited messages\n"
         "• `/config` : Set warn limits & actions\n"
         "• `/delay <min>` : Media auto-delete timer\n\n"
         "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
@@ -861,7 +902,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         msg = await update.message.reply_text("❌ You have not permission.")
-        asyncio.create_task(delete_after_delay(msg, 10))
+        # Make sure you have delete_after_delay defined, or remove this task
+        # asyncio.create_task(delete_after_delay(msg, 10)) 
         return
         
     chat_id = update.effective_chat.id
@@ -869,23 +911,30 @@ async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     warn_limit = config[1]
     action = config[2]
 
+    # 👇 Fetch Edit Guard status
+    edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+    edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
+    edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
+
     mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
     ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
 
     text = (
         "⚙️ **Group Configuration**\n\n"
         f"⚠️ **Current Warn Limit:** {warn_limit}\n"
-        f"🔨 **Current Action:** {action.upper()}"
+        f"🔨 **Current Action:** {action.upper()}\n"
+        f"✏️ **Edit Guard:** {edit_status}" # <--- Shows status in text
     )
 
     keyboard = [
         [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
         [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
+        [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")], # <--- The new toggle button
         [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
     ]
 
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
+    
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Admin Permission Check
     if not await is_user_admin(update, context): 
@@ -934,7 +983,34 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Auto-delete the bot's response after 30 seconds to keep the group clean
     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=sent_msg.message_id)
+
+async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    # Admin verification
+    if not await is_user_admin(update, context) and not db.is_sudo(update.effective_user.id):
+        msg = await update.message.reply_text("❌ You do not have permission to use this command.")
+        context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
+        return
+
+    args = context.args
+    if not args or args[0].lower() not in ['on', 'off']:
+        await update.message.reply_text("❗ **Usage:** `/edit on` or `/edit off`", parse_mode='Markdown')
+        return
+
+    state_str = args[0].lower()
+    state = (state_str == "on")
     
+    # Update database
+    db.set_edit_guard(chat_id, state)
+    
+    status = "ENABLED" if state else "DISABLED"
+    await update.message.reply_text(
+        f"✏️ **Edit Guard** is now **{status}** in this group.\n\n"
+        f"_{'Edited messages will now be deleted.' if state else 'Edited messages will NO LONGER be deleted.'}_", 
+        parse_mode='Markdown'
+    )
+
 async def aplist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
@@ -1739,6 +1815,16 @@ async def listlocal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edited_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.edited_message
     if not msg or not msg.from_user: return
+
+    # 👇 ADD THIS CHECK BEFORE DOING ANYTHING ELSE 👇
+    if not db.is_edit_guard_enabled(msg.chat_id):
+        return # If Edit Guard is OFF, do nothing and let the user edit!
+    # 👆 ADD THIS CHECK 👆
+
+    # 👇 NEW ADMIN CHECK: Do nothing if the user is an Admin, Owner, or Sudo 👇
+    if await is_user_admin(update, context) or db.is_sudo(msg.from_user.id):
+        return 
+    # 👆 NEW ADMIN CHECK 👆
     
     # 1. Message ko turant delete karna
     try:
@@ -2295,6 +2381,7 @@ def main():
     app_bot.add_handler(CommandHandler("approve", approve_command))
     app_bot.add_handler(CommandHandler("unapprove", unapprove_command))
     app_bot.add_handler(CommandHandler("antichannel", antichannel_command))
+    app_bot.add_handler(CommandHandler("edit", edit_command))
     app_bot.add_handler(CommandHandler("cleangroups", cleangroups_command))
     app_bot.add_handler(CommandHandler("nsfw", nsfw_command))
     app_bot.add_handler(CommandHandler("addsudo", addsudo_command))
