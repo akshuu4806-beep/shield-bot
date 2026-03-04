@@ -51,7 +51,8 @@ def keep_alive():
 # Ab ye values Render ke Environment Variables se aayengi
 TOKEN = os.environ.get("TOKEN")
 MONGO_URL = os.environ.get("MONGO_URL")
-ADMIN_IDS = [8507307665]
+admin_env = os.environ.get("ADMIN_IDS", "")
+ADMIN_IDS = [int(x.strip()) for x in admin_env.split(",") if x.strip().isdigit()]
 IST = pytz.timezone('Asia/Kolkata')
 # Sightengine Multiple API Keys Setup
 # Add your keys in Render Environment Variables as SE_USER_1, SE_SECRET_1, etc.
