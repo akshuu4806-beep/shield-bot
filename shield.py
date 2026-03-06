@@ -32,6 +32,12 @@ from telegram.ext import (
     ApplicationHandlerStop   # ADD THIS
 )
 
+import time
+from collections import defaultdict
+
+# Add this right below your imports
+BULK_DELETE_QUEUE = defaultdict(list)
+
 # ========== RENDER KEEP-ALIVE (FLASK) ==========
 app = Flask('')
 
@@ -280,6 +286,20 @@ logger = logging.getLogger(__name__)
 
 # ... [Aapka baki pura code yahan aayega, jaise start_command, message_handler, etc.] ...
 # Note: Maine code length ki wajah se yahan functions skip kiye hain, par aapko apne baki commands as it is rakhne hain.
+
+async def process_bulk_delete(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    
+    if chat_id in BULK_DELETE_QUEUE and BULK_DELETE_QUEUE[chat_id]:
+        # Copy the list of message IDs and clear the original queue
+        msg_ids_to_delete = BULK_DELETE_QUEUE[chat_id].copy()
+        BULK_DELETE_QUEUE[chat_id].clear()
+        
+        try:
+            # This PTB method deletes up to 100 messages at once!
+            await context.bot.delete_messages(chat_id=chat_id, message_ids=msg_ids_to_delete)
+        except Exception as e:
+            pass # Ignore if messages are already deleted
 
 # ========== HELPERS ==========
 async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1977,41 +1997,58 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         # 🟢 CASE A: AGAR BLOCKED WORD MILA (Abuse)
         if blocked_word_found:
-            db.update_stat('abuse_caught') # Status me judega
-            try:
-                await update.message.delete() # User ka message turant delete
-            except Exception: pass
+            db.update_stat('abuse_caught')
             
-            # Admin ko tag NAHI jayega. User ko us word ke sath warning dikhegi
-            alert_msg = await context.bot.send_message(
-                chat_id=chat_id, 
-                text=f"🚫 {user.mention_html()}, you cannot use the blocked word: <b>{html.escape(caught_word)}</b>", 
-                parse_mode='HTML'
-            )
+            # Add message to the bulk delete queue
+            BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
+
+            # Trigger the bulk delete job (runs after 1.5 seconds to catch all spam)
+            job_name = f"bulk_del_{chat_id}"
+            if not context.job_queue.get_jobs_by_name(job_name):
+                context.job_queue.run_once(process_bulk_delete, 1.5, chat_id=chat_id, name=job_name)
+
+            # Anti-Spam Alert Cooldown: Only send 1 warning every 10 seconds per user
+            current_time = time.time()
+            if current_time - context.chat_data.get(f"last_word_alert_{user.id}", 0) > 10:
+                context.chat_data[f"last_word_alert_{user.id}"] = current_time
+                try:
+                    alert_msg = await context.bot.send_message(
+                        chat_id=chat_id, 
+                        text=f"🚫 {user.mention_html()}, you cannot use the blocked word: <b>{html.escape(caught_word)}</b>", 
+                        parse_mode='HTML'
+                    )
+                    context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
+                except Exception: pass
             
-            # 👇 Theek 3 second baad bot apna message delete kar dega 👇
-            context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
             return # Yahan code ruk jayega
 
         # 🔴 CASE B: AGAR BLOCKED STICKER MILA
         elif blocked_sticker_found:
-            db.update_stat('nsfw_blocked') # Status me judega
-            try:
-                await update.message.delete()
-            except Exception: pass
+            db.update_stat('nsfw_blocked')
             
-            # Sticker ke liye pehle ki tarah Admin ko tag jayega
-            admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
-            admin_alert = (
-                f"🚨 <b>Blocked Sticker Detected & Deleted</b>\n\n"
-                f"👤 <b>Sender:</b> {user.mention_html()}\n"
-                f"{admin_tags}"  # Ye invisible tags message ke last me chhupe rahenge
-            )
-            try:
-                alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
-                # 👇 Admin alert ko 30 second baad delete karne ka timer
-                context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
-            except Exception: pass
+            # Add sticker to the bulk delete queue
+            BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
+
+            # Trigger the bulk delete job
+            job_name = f"bulk_del_{chat_id}"
+            if not context.job_queue.get_jobs_by_name(job_name):
+                context.job_queue.run_once(process_bulk_delete, 1.5, chat_id=chat_id, name=job_name)
+
+            # Anti-Spam Alert Cooldown: Only send 1 admin alert every 10 seconds per user
+            current_time = time.time()
+            if current_time - context.chat_data.get(f"last_sticker_alert_{user.id}", 0) > 10:
+                context.chat_data[f"last_sticker_alert_{user.id}"] = current_time
+                
+                admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
+                admin_alert = (
+                    f"🚨 <b>Blocked Sticker Detected & Deleted</b>\n\n"
+                    f"👤 <b>Sender:</b> {user.mention_html()}\n"
+                    f"{admin_tags}" 
+                )
+                try:
+                    alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
+                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
+                except Exception: pass
             
             return # Yahan code ruk jayega
             
@@ -2060,46 +2097,43 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(temp_file_path)
             
             if is_explicit:
-
-                # 👇 NAYI LINE: NSFW counter ko badhane ke liye
+                # 👇 NSFW counter ko badhane ke liye
                 db.update_stat('nsfw_blocked')
 
-                # 1. INSTANT DELETE MESSAGE (SAFE WAY)
-                try:
-                    await update.message.delete()
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if "can't be deleted" in error_msg or "not enough rights" in error_msg:
-                        try:
-                            await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-                        except:
-                            pass
-                                                
-                # 3. Silently Tag Admins in the Group
-                admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
-                
-                admin_alert = (
-                    f"🚨 <b>NSFW Content Detected Please Take Action</b>\n\n"
-                    f"👤 <b>Sender:</b> {user.mention_html()}"
-                    f"{admin_tags}"
-                )
-                
-                try:
-                    nsfw_alert_msg = await context.bot.send_message(
-                        chat_id=chat_id, 
-                        text=admin_alert, 
-                        parse_mode='HTML', 
-                        disable_notification=True 
+                # 1. Add image to the bulk delete queue
+                BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
+
+                # Trigger the bulk delete job (runs after 1.5 seconds)
+                job_name = f"bulk_del_{chat_id}"
+                if not context.job_queue.get_jobs_by_name(job_name):
+                    context.job_queue.run_once(process_bulk_delete, 1.5, chat_id=chat_id, name=job_name)
+
+                # 2. Anti-Spam Alert Cooldown: Only send 1 admin alert every 10 seconds per user
+                current_time = time.time()
+                if current_time - context.chat_data.get(f"last_nsfw_alert_{user.id}", 0) > 10:
+                    context.chat_data[f"last_nsfw_alert_{user.id}"] = current_time
+                    
+                    # 3. Silently Tag Admins in the Group
+                    admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
+                    
+                    admin_alert = (
+                        f"🚨 <b>NSFW Content Detected Please Take Action</b>\n\n"
+                        f"👤 <b>Sender:</b> {user.mention_html()}"
+                        f"{admin_tags}"
                     )
-                    # 👇 NSFW wale admin alert ko bhi 30 second baad delete karne ka timer
-                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
-                except Exception as e:
-                    print(f"Group Alert Error: {e}")
                     
-                    
-                except Exception as e:
-                    print(f"Group Alert Error: {e}")
-                    
+                    try:
+                        nsfw_alert_msg = await context.bot.send_message(
+                            chat_id=chat_id, 
+                            text=admin_alert, 
+                            parse_mode='HTML', 
+                            disable_notification=True 
+                        )
+                        # 👇 NSFW wale admin alert ko bhi 30 second baad delete karne ka timer
+                        context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
+                    except Exception as e:
+                        print(f"Group Alert Error: {e}")
+                        
                 return # Stop processing this message further
                 
         except Exception as e:
