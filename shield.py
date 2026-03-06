@@ -836,46 +836,86 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(group_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     # 1. Fetch the bot's name
     bot_info = await context.bot.get_me()
     bot_name = bot_info.first_name
 
-    # 2. Fetch Stats from MongoDB (Yahan abuse_caught add kiya hai)
-    stats = db.get_global_stats() 
+    # 2. Fetch Stats from MongoDB
+    stats = db.get_global_stats()
     scanned, bio_caught, media_del, warns_issued, nsfw_blocked, abuse_caught, start_timestamp = stats
-    
+
     # 3. Monitored Groups calculation
     groups = db.get_groups()
     group_count = len(groups) if groups else 0
-    
-    # 4. Permanent Uptime Calculation (Hours, Minutes, Seconds only)
+
+    # 4. Permanent Uptime Calculation
     bot_start_time = datetime.fromtimestamp(start_timestamp, IST)
     uptime_delta = datetime.now(IST) - bot_start_time
-    
+
     total_seconds = int(uptime_delta.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    
+
     uptime_str = f"{hours}h {minutes}m {seconds}s"
-    
-    # 5. Build the text using HTML (Yahan Abuse Caught line add ki hai)
+
+    # 🔥 Threat calculation
+    total_threats = bio_caught + media_del + warns_issued + nsfw_blocked + abuse_caught
+
+    if scanned == 0:
+        threat_percent = 0
+    else:
+        threat_percent = int((total_threats / scanned) * 100)
+
+    if threat_percent < 10:
+        threat_level = "LOW 🟢"
+    elif threat_percent < 30:
+        threat_level = "MODERATE 🟡"
+    else:
+        threat_level = "HIGH 🔴"
+
+    # 📊 Progress bar function
+    def progress_bar(percent):
+        bars = int(percent / 10)
+        return "█" * bars + "░" * (10 - bars)
+
+    # 💻 Terminal UI
     text = (
-        f"<b>{bot_name}</b>\n\n"
-        "📊 <b>SYSTEM STATS</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👁️ <b>Total Scanned:</b> <code>{scanned}</code>\n"
-        f"☣️ <b>Bio Link Caught:</b> <code>{bio_caught}</code>\n"
-        f"🗑  <b>Media Deleted:</b> <code>{media_del}</code>\n"
-        f"⚠️ <b>Warnings Issued:</b> <code>{warns_issued}</code>\n"
-        f"🔞 <b>NSFW Blocked:</b> <code>{nsfw_blocked}</code>\n"
-        f"🤬 <b>Abuse Caught:</b> <code>{abuse_caught}</code>\n"
-        f"🏘  <b>Monitored Groups:</b> <code>{group_count}</code>\n"
-        f"⏳ <b>Uptime:</b> <code>{uptime_str}</code>\n"
+        f"<b>{bot_name}</b>\n"
+        "<code>┌──────────────────────────────┐</code>\n"
+        "<code>│ MATRIX AI SECURITY TERMINAL │</code>\n"
+        "<code>└──────────────────────────────┘</code>\n\n"
+
+        "🟢 <b>STATUS</b> : <code>LIVE PROTECTION</code>\n"
+        "<code>system.scan() running...</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        "<b>[ THREAT ANALYTICS ]</b>\n\n"
+
+        f"<code>> scanned_total     {progress_bar(100)} {scanned}</code>\n"
+        f"<code>> bio_link_caught   {progress_bar(bio_caught)} {bio_caught}</code>\n"
+        f"<code>> media_deleted    {progress_bar(media_del)} {media_del}</code>\n"
+        f"<code>> warnings_issued  {progress_bar(warns_issued)} {warns_issued}</code>\n"
+        f"<code>> nsfw_blocked     {progress_bar(nsfw_blocked)} {nsfw_blocked}</code>\n"
+        f"<code>> abuse_caught     {progress_bar(abuse_caught)} {abuse_caught}</code>\n\n"
+
+        "<b>[ NETWORK ]</b>\n"
+        f"<code>> monitored_groups : {group_count}</code>\n\n"
+
+        "<b>[ SYSTEM ]</b>\n"
+        f"<code>> uptime : {uptime_str}</code>\n\n"
+
+        "<b>[ AI THREAT LEVEL ]</b>\n"
+        f"<code>{progress_bar(threat_percent)} {threat_percent}%</code>\n"
+        f"<b>{threat_level}</b>\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<code>AI core :: scanning • filtering • neutralizing</code>\n"
     )
-    
+
     keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
     
 async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
