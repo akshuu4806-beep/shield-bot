@@ -876,42 +876,42 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 📊 Progress bar function
     def progress_bar(percent):
+        percent = max(0, min(percent, 100))  # 0–100 limit
         bars = int(percent / 10)
         return "█" * bars + "░" * (10 - bars)
 
-    # 💻 Terminal UI
     text = (
-        f"<b>{bot_name}</b>\n"
-        "<code>┌──────────────────────────────┐</code>\n"
-        "<code>│ MATRIX AI SECURITY TERMINAL │</code>\n"
-        "<code>└──────────────────────────────┘</code>\n\n"
+    f"<b>{bot_name}</b>\n"
+    "<code>┌──────────────────────────────┐</code>\n"
+    "<code>│ MATRIX AI SECURITY TERMINAL │</code>\n"
+    "<code>└──────────────────────────────┘</code>\n\n"
 
-        "🟢 <b>STATUS</b> : <code>LIVE PROTECTION</code>\n"
-        "<code>system.scan() running...</code>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "🟢 <b>STATUS</b> : <code>LIVE PROTECTION</code>\n"
+    "<code>system.scan() running...</code>\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-        "<b>[ THREAT ANALYTICS ]</b>\n\n"
+    "<b>[ THREAT ANALYTICS ]</b>\n\n"
 
-        f"<code>> scanned_total     {progress_bar(100)} {scanned}</code>\n"
-        f"<code>> bio_link_caught   {progress_bar(bio_caught)} {bio_caught}</code>\n"
-        f"<code>> media_deleted    {progress_bar(media_del)} {media_del}</code>\n"
-        f"<code>> warnings_issued  {progress_bar(warns_issued)} {warns_issued}</code>\n"
-        f"<code>> nsfw_blocked     {progress_bar(nsfw_blocked)} {nsfw_blocked}</code>\n"
-        f"<code>> abuse_caught     {progress_bar(abuse_caught)} {abuse_caught}</code>\n\n"
+    f"<code>> scanned_total     {progress_bar(100)} {scanned}</code>\n"
+    f"<code>> bio_link_caught   {progress_bar(bio_caught)} {bio_caught}</code>\n"
+    f"<code>> media_deleted    {progress_bar(media_del)} {media_del}</code>\n"
+    f"<code>> warnings_issued  {progress_bar(warns_issued)} {warns_issued}</code>\n"
+    f"<code>> nsfw_blocked     {progress_bar(nsfw_blocked)} {nsfw_blocked}</code>\n"
+    f"<code>> abuse_caught     {progress_bar(abuse_caught)} {abuse_caught}</code>\n\n"
 
-        "<b>[ NETWORK ]</b>\n"
-        f"<code>> monitored_groups : {group_count}</code>\n\n"
+    "<b>[ NETWORK ]</b>\n"
+    f"<code>> monitored_groups : {group_count}</code>\n\n"
 
-        "<b>[ SYSTEM ]</b>\n"
-        f"<code>> uptime : {uptime_str}</code>\n\n"
+    "<b>[ SYSTEM ]</b>\n"
+    f"<code>> uptime : {uptime_str}</code>\n\n"
 
-        "<b>[ AI THREAT LEVEL ]</b>\n"
-        f"<code>{progress_bar(threat_percent)} {threat_percent}%</code>\n"
-        f"<b>{threat_level}</b>\n\n"
+    "<b>[ AI THREAT LEVEL ]</b>\n"
+    f"<code>{progress_bar(threat_percent)} {threat_percent}%</code>\n"
+    f"<b>{threat_level}</b>\n\n"
 
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<code>AI core :: scanning • filtering • neutralizing</code>\n"
-    )
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    "<code>AI core :: scanning • filtering • neutralizing</code>\n"
+)
 
     keyboard = [[InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
