@@ -317,47 +317,100 @@ def has_link(text):
         if re.search(pattern, text, re.IGNORECASE): return True
     return False
 
-async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[int | None, str | None, str]:
-    """Extracts Target User ID and Name from Reply, ID, Username, or Mention."""
-    message = update.message
-    args = context.args
+async def extract_target(client: Client, message: Message) -> tuple[int | None, str | None, str]:
+    """
+    Extracts target user ID, Name, and Reason from Reply, ID, Username, or Name.
+    Returns: (user_id, user_name, reason/custom_text)
+    """
+    chat_id = message.chat.id
+    
+    # Command arguments (excluding the command itself)
+    args = message.command[1:] if message.command and len(message.command) > 1 else []
 
-    # 1. Reply Check
+    # 1. Check for Reply first
     if message.reply_to_message and message.reply_to_message.from_user:
         user = message.reply_to_message.from_user
         reason = " ".join(args) if args else "No reason"
         return user.id, user.first_name, reason
 
     if not args:
-        return None, None, "❗ Please reply to a user, or provide their ID/Username."
+        return None, None, "❗ Kripya kisi ko reply karein, ya User ID/Username/Name mention karein."
 
     identifier = args[0]
     reason = " ".join(args[1:]) if len(args) > 1 else "No reason"
 
-    # 2. Text Mention Check (Name tags without @username)
-    if message.entities:
-        for entity in message.entities:
-            if entity.type == 'text_mention':
+    def _normalize_member_name(member_value):
+        """Supports legacy string format and future dict-based member records."""
+        if isinstance(member_value, dict):
+            return member_value.get("name") or member_value.get("first_name") or ""
+        return str(member_value or "")
+    
+    async def _resolve_from_identifier(raw_identifier: str):
+        """Resolve user from ID, @username, or bare username."""
+        # User ID
+        if raw_identifier.isdigit() or (raw_identifier.startswith('-') and raw_identifier[1:].isdigit()):
+            try:
+                user_id = int(raw_identifier)
+                chat_user = await client.get_users(user_id)
+                return user_id, chat_user.first_name or "User"
+            except Exception:
+                return None, None
+
+        # Username with or without @
+        candidate = raw_identifier if raw_identifier.startswith('@') else f"@{raw_identifier}"
+        if len(candidate) > 1:
+            try:
+                chat_user = await client.get_users(candidate)
+                return chat_user.id, chat_user.first_name or "User"
+            except Exception:
+                return None, None
+
+        return None, None
+
+
+    # 2. Check for Text Mention (Entity)
+    entities = message.entities or message.caption_entities
+    if entities:
+        for entity in entities:
+            if entity.type == MessageEntityType.TEXT_MENTION:
                 return entity.user.id, entity.user.first_name, reason
+            if entity.type == MessageEntityType.MENTION and message.text:
+                entity_username = message.text[entity.offset: entity.offset + entity.length]
+                if entity_username:
+                    resolved_id, resolved_name = await _resolve_from_identifier(entity_username)
+                    if resolved_id:
+                        return resolved_id, resolved_name, reason
+    # 3. Check for User ID / @Username / bare username
+    resolved_id, resolved_name = await _resolve_from_identifier(identifier)
+    if resolved_id:
+        return resolved_id, resolved_name, reason
 
-    # 3. User ID Check
-    if identifier.isdigit() or (identifier.startswith('-') and identifier[1:].isdigit()):
-        try:
-            user_id = int(identifier)
-            chat = await context.bot.get_chat(user_id)
-            return user_id, chat.first_name, reason
-        except:
-            pass
+    # 4. Name Search (Agar Group Data/Memory me naam match ho jaye)
+    members = db.get_group_data(chat_id, 'members', {})
 
-    # 4. @Username Check
-    if identifier.startswith('@'):
-        try:
-            chat = await context.bot.get_chat(identifier)
-            return chat.id, chat.first_name, reason
-        except:
-            pass
+    # Multi-word names ko support karne ke liye longest prefix match
+    lowered_name_map = {
+        str_uid: _normalize_member_name(name).strip()
+        for str_uid, name in members.items()
+    }
 
+    for consume_count in range(len(args), 0, -1):
+        possible_name = " ".join(args[:consume_count]).strip().lower()
+        if not possible_name:
+            continue
+
+        for str_uid, display_name in lowered_name_map.items():
+            name_lower = display_name.lower()
+            if not name_lower:
+                continue
+
+            if possible_name == name_lower or possible_name in name_lower.split():
+                custom_reason = " ".join(args[consume_count:]) or "No reason"
+                return int(str_uid), display_name, custom_reason
+
+    # Agar kuch bhi match nahi hua
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
+
     
 async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context):
