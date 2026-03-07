@@ -19,7 +19,7 @@ from telegram import (
     ReactionTypeEmoji
 )
 from telegram.error import Forbidden, BadRequest
-from telegram.constants import ChatMemberStatus
+from telegram.constants import ChatMemberStatus, MessageEntityType
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -317,15 +317,19 @@ def has_link(text):
         if re.search(pattern, text, re.IGNORECASE): return True
     return False
 
-async def extract_target(client: Client, message: Message) -> tuple[int | None, str | None, str]:
+async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[int | None, str | None, str]:
     """
     Extracts target user ID, Name, and Reason from Reply, ID, Username, or Name.
     Returns: (user_id, user_name, reason/custom_text)
     """
-    chat_id = message.chat.id
+    message = update.message
+    if not message:
+        return None, None, "No message found."
     
-    # Command arguments (excluding the command itself)
-    args = message.command[1:] if message.command and len(message.command) > 1 else []
+    chat_id = message.chat_id
+    
+    # In python-telegram-bot, arguments are stored in context.args
+    args = context.args or []
 
     # 1. Check for Reply first
     if message.reply_to_message and message.reply_to_message.from_user:
@@ -339,19 +343,13 @@ async def extract_target(client: Client, message: Message) -> tuple[int | None, 
     identifier = args[0]
     reason = " ".join(args[1:]) if len(args) > 1 else "No reason"
 
-    def _normalize_member_name(member_value):
-        """Supports legacy string format and future dict-based member records."""
-        if isinstance(member_value, dict):
-            return member_value.get("name") or member_value.get("first_name") or ""
-        return str(member_value or "")
-    
     async def _resolve_from_identifier(raw_identifier: str):
-        """Resolve user from ID, @username, or bare username."""
+        """Resolve user from ID or @username using PTB methods."""
         # User ID
-        if raw_identifier.isdigit() or (raw_identifier.startswith('-') and raw_identifier[1:].isdigit()):
+        if raw_identifier.lstrip('-').isdigit():
             try:
                 user_id = int(raw_identifier)
-                chat_user = await client.get_users(user_id)
+                chat_user = await context.bot.get_chat(user_id)
                 return user_id, chat_user.first_name or "User"
             except Exception:
                 return None, None
@@ -360,13 +358,12 @@ async def extract_target(client: Client, message: Message) -> tuple[int | None, 
         candidate = raw_identifier if raw_identifier.startswith('@') else f"@{raw_identifier}"
         if len(candidate) > 1:
             try:
-                chat_user = await client.get_users(candidate)
+                chat_user = await context.bot.get_chat(candidate)
                 return chat_user.id, chat_user.first_name or "User"
             except Exception:
                 return None, None
 
         return None, None
-
 
     # 2. Check for Text Mention (Entity)
     entities = message.entities or message.caption_entities
@@ -380,47 +377,24 @@ async def extract_target(client: Client, message: Message) -> tuple[int | None, 
                     resolved_id, resolved_name = await _resolve_from_identifier(entity_username)
                     if resolved_id:
                         return resolved_id, resolved_name, reason
-    # 3. Check for User ID / @Username / bare username
+
+    # 3. Check for User ID / @Username
     resolved_id, resolved_name = await _resolve_from_identifier(identifier)
     if resolved_id:
         return resolved_id, resolved_name, reason
 
-    # 4. Name Search (Agar Group Data/Memory me naam match ho jaye)
-    members = db.get_group_data(chat_id, 'members', {})
-
-    # Multi-word names ko support karne ke liye longest prefix match
-    lowered_name_map = {
-        str_uid: _normalize_member_name(name).strip()
-        for str_uid, name in members.items()
-    }
-
-    for consume_count in range(len(args), 0, -1):
-        possible_name = " ".join(args[:consume_count]).strip().lower()
-        if not possible_name:
-            continue
-
-        for str_uid, display_name in lowered_name_map.items():
-            name_lower = display_name.lower()
-            if not name_lower:
-                continue
-
-            if possible_name == name_lower or possible_name in name_lower.split():
-                custom_reason = " ".join(args[consume_count:]) or "No reason"
-                return int(str_uid), display_name, custom_reason
-
-    # Agar kuch bhi match nahi hua
+    # If nothing matches
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
-
     
 async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
         
-    target_id, target_name, _ = await extract_target(update, context)
+    target_id, target_name, error_msg = await extract_target(update, context)
 
     if not target_id:
-        await update.message.reply_text("❗ Reply to a user, or provide their ID/Username to approve.")
+        await update.message.reply_text(error_msg)
         return
 
     # Check if the target user is an admin
@@ -449,10 +423,10 @@ async def unapprove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ You have not permission.")
         return
         
-    target_id, target_name, _ = await extract_target(update, context)
+    target_id, target_name, error_msg = await extract_target(update, context)
 
     if not target_id:
-        await update.message.reply_text("❗ Reply to a user, or provide their ID/Username to unapprove.")
+        await update.message.reply_text(error_msg)
         return
 
     # Check if the target user is an admin
@@ -1292,9 +1266,9 @@ async def addsudo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only the Bot Owner can use this command.")
         return
 
-    target_id, target_name, _ = await extract_target(update, context)
+    target_id, target_name, error_msg = await extract_target(update, context)
     if not target_id:
-        await update.message.reply_text("❗ Reply to a user, or provide their ID/Username to add as Sudo.")
+        await update.message.reply_text(error_msg)
         return
 
     if target_id in ADMIN_IDS:
@@ -1310,9 +1284,9 @@ async def rmsudo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only the Bot Owner can use this command.")
         return
 
-    target_id, target_name, _ = await extract_target(update, context)
+    target_id, target_name, error_msg = await extract_target(update, context)
     if not target_id:
-        await update.message.reply_text("❗ Reply to a user, or provide their ID/Username to remove from Sudo.")
+        await update.message.reply_text(error_msg)
         return
 
     safe_name = target_name or str(target_id)
