@@ -151,9 +151,38 @@ class PersistentDB:
     def set_nsfw(self, chat_id, enabled):
         self.group_config.update_one({"_id": chat_id}, {"$set": {"nsfw_enabled": 1 if enabled else 0}}, upsert=True)
 
-    def add_user(self, user_id):
-        self.users.update_one({"_id": user_id}, {"$set": {"_id": user_id}}, upsert=True)
+    def add_user(self, user_or_id):
+        user_id = user_or_id.id if hasattr(user_or_id, "id") else int(user_or_id)
 
+        payload = {"_id": user_id}
+        if hasattr(user_or_id, "username"):
+            username = (user_or_id.username or "").strip()
+            first_name = (user_or_id.first_name or "").strip()
+            full_name = (user_or_id.full_name or first_name).strip()
+            payload.update({
+                "username": username,
+                "first_name": first_name,
+                "full_name": full_name,
+                "username_lc": username.lower(),
+                "first_name_lc": first_name.lower(),
+                "full_name_lc": full_name.lower(),
+            })
+
+        self.users.update_one({"_id": user_id}, {"$set": payload}, upsert=True)
+
+    def find_user_by_name_or_username(self, identifier):
+        q = (identifier or "").strip().lstrip('@').lower()
+        if not q:
+            return None
+
+        return self.users.find_one({
+            "$or": [
+                {"username_lc": q},
+                {"first_name_lc": q},
+                {"full_name_lc": q},
+            ]
+        })
+        
     def add_group(self, chat_id, title="Unknown Group"):
         self.groups.update_one({"_id": chat_id}, {"$set": {"title": title}}, upsert=True)
 
@@ -344,7 +373,11 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reason = " ".join(args[1:]) if len(args) > 1 else "No reason"
 
     async def _resolve_from_identifier(raw_identifier: str):
-        """Resolve user from ID or @username using PTB methods."""
+        """Resolve user from ID, @username, or exact name."""
+        raw_identifier = (raw_identifier or "").strip()
+        if not raw_identifier:
+            return None, None
+            
         # User ID
         if raw_identifier.lstrip('-').isdigit():
             try:
@@ -361,7 +394,30 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_user = await context.bot.get_chat(candidate)
                 return chat_user.id, chat_user.first_name or "User"
             except Exception:
-                return None, None
+                pass
+
+        # Exact name/username match from local DB
+        cached_user = db.find_user_by_name_or_username(raw_identifier)
+        if cached_user:
+            return cached_user.get("_id"), cached_user.get("full_name") or cached_user.get("first_name") or "User"
+
+        # Exact name/username match from current chat admins (best effort)
+        if update.effective_chat and update.effective_chat.type in ['group', 'supergroup']:
+            try:
+                admins = await context.bot.get_chat_administrators(chat_id)
+                q = raw_identifier.lstrip('@').lower()
+                for admin in admins:
+                    u = admin.user
+                    if not u:
+                        continue
+                    admin_username = (u.username or "").lower()
+                    admin_first = (u.first_name or "").lower()
+                    admin_full = (u.full_name or u.first_name or "").lower()
+                    if q in {admin_username, admin_first, admin_full}:
+                        return u.id, u.full_name or u.first_name or "User"
+            except Exception:
+                pass
+
 
         return None, None
 
@@ -772,7 +828,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 2. Database Logging
     if chat.type == 'private':
-        db.add_user(update.effective_user.id) 
+        db.add_user(update.effective_user)
     else:
         db.add_group(chat.id, chat.title)
 
@@ -2018,7 +2074,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2. Private / Group Logic
     if update.effective_chat.type == 'private':
-        if user: db.add_user(user.id)
+        if user: db.add_user(user)
         return
 
     # ---> IGNORE JOIN/LEFT MESSAGES <---
