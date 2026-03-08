@@ -442,7 +442,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # If nothing matches
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
     
-async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -466,7 +466,7 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
             
     if is_target_admin:
-        await update.message.reply_text("user is already admin admins are already approved")
+        await update.message.reply_text("user is already admin admins are already allowd")
         return
 
     db.add_to_allowlist(target_id)
@@ -474,7 +474,7 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     safe_name = target_name or str(target_id)
     await update.message.reply_text(f"✅ **{safe_name}** (`{target_id}`) has been whitelisted.", parse_mode='Markdown')
 
-async def unapprove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -498,7 +498,7 @@ async def unapprove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
             
     if is_target_admin:
-        await update.message.reply_text("this user is an admin they cannot be unapproved")
+        await update.message.reply_text("this user is an admin they cannot be unallowd")
         return
 
     safe_name = target_name or str(target_id)
@@ -557,8 +557,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/unblocksticker` : Unblock pack locally\n"
         "• `/listlocal` : View local blocked list\n\n"
         "👥 **USER MANAGEMENT**\n"
-        "• `/approve` : Whitelist a user\n"
-        "• `/unapprove` : Remove from whitelist\n"
+        "• `/allow` : Whitelist a user\n"
+        "• `/unallow` : Remove from whitelist\n"
         "• `/aplist` : List whitelist users\n"
     )
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
@@ -714,7 +714,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         return
 
-    # --- OTHER ADMIN BUTTONS (Approve, Unban, Unmute) ---
+    # --- OTHER ADMIN BUTTONS (allow, Unban, Unmute) ---
     try: await query.answer() 
     except: pass
     
@@ -725,20 +725,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) > 1 and parts[-1].lstrip('-').isdigit():
             target_id = int(parts[-1])
 
-            if action == "approve":
+            if action == "allow":
                 db.add_to_allowlist(target_id)
                 db.reset_warnings(target_id)
-                keyboard = [[InlineKeyboardButton("❌ Unapprove", callback_data=f"unapprove_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
+                keyboard = [[InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-                await context.bot.send_message(chat_id, f"✅ **Approved:** User `{target_id}` has been whitelisted.", parse_mode='Markdown')
+                await context.bot.send_message(chat_id, f"✅ **allowd:** User `{target_id}` has been whitelisted.", parse_mode='Markdown')
 
-            elif action == "unapprove":
+            elif action == "unallow":
                 db.remove_from_allowlist(target_id)
-                keyboard = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
+                keyboard = [[InlineKeyboardButton("✅ allow", callback_data=f"allow_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-                await context.bot.send_message(chat_id, f"❌ **Unapproved:** User `{target_id}` removed from whitelist.", parse_mode='Markdown')
+                await context.bot.send_message(chat_id, f"❌ **Unallowd:** User `{target_id}` removed from whitelist.", parse_mode='Markdown')
 
             elif action in ["unwarn", "cancle warning"]:
                 db.reset_warnings(target_id)
@@ -888,8 +888,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/unblocksticker` : Unblock pack locally\n"
         "• `/listlocal` : View local blocked list\n\n"
         "👥 **USER MANAGEMENT**\n"
-        "• `/approve` : Whitelist a user\n"
-        "• `/unapprove` : Remove from whitelist\n"
+        "• `/allow` : Whitelist a user\n"
+        "• `/unallow` : Remove from whitelist\n"
         "• `/aplist` : List whitelist users\n"
     )
 
@@ -1119,9 +1119,9 @@ async def aplist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     allowlist = db.get_allowlist()
     if not allowlist:
-        await update.message.reply_text("Approved list is empty.")
+        await update.message.reply_text("allowd list is empty.")
         return
-    text = "✅ **Approved Users:**\n\n"
+    text = "✅ **allowd Users:**\n\n"
     for idx, uid in enumerate(allowlist, 1):
         text += f"{idx}. `{uid}`\n"
     await update.message.reply_text(text, parse_mode='Markdown')
@@ -2037,7 +2037,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = db.get_config(chat_id)
     anti_channel_enabled = config[4] if len(config) > 4 else 1
 
-    # Determine if user is Admin or Approved
+    # Determine if user is Admin or allowd
     is_exempt = False
     if user:
         if user.id in ADMIN_IDS or db.is_allowed(user.id):
@@ -2176,7 +2176,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return # Yahan code ruk jayega
             
     # ===================================================================
-    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/Approved too)
+    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/allowd too)
     # Covers Media, Document, Video, Sticker, GIF
     # ===================================================================
     file_id = None
@@ -2365,7 +2365,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "📌 REPEATED VIOLATIONS WILL LEAD TO MUTE/BAN."
                 )
                 is_app = db.is_allowed(user.id)
-                app_btn = InlineKeyboardButton("❌ Unapprove", callback_data=f"unapprove_{user.id}") if is_app else InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user.id}")
+                app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
                 keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
@@ -2377,7 +2377,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     adder = update.message.from_user
     
-    # Bypass check for Admins and Approved users (For Anti-Bot)
+    # Bypass check for Admins and allowd users (For Anti-Bot)
     is_adder_admin = False
     if adder.id in ADMIN_IDS:
         is_adder_admin = True
@@ -2423,7 +2423,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue # Agar ye GBanned hai, toh agli bot checking mat karo, sidha next member par jao
 
         # 2. ANTI-BOT CHECK (Agar join karne wala GBanned nahi hai, tab ye check hoga)
-        # Ye tabhi check hoga jab add karne wala admin ya approved nahi hai
+        # Ye tabhi check hoga jab add karne wala admin ya allowd nahi hai
         if not is_adder_exempt:
             if new_member.is_bot and new_member.id != context.bot.id:
                 try:
@@ -2523,8 +2523,8 @@ def main():
     app_bot.add_handler(CommandHandler("aplist", aplist_command))
     app_bot.add_handler(CommandHandler("getlink", getlink_command))
     app_bot.add_handler(CommandHandler("gmsg", gmsg_command))
-    app_bot.add_handler(CommandHandler("approve", approve_command))
-    app_bot.add_handler(CommandHandler("unapprove", unapprove_command))
+    app_bot.add_handler(CommandHandler("allow", allow_command))
+    app_bot.add_handler(CommandHandler("unallow", unallow_command))
     app_bot.add_handler(CommandHandler("antichannel", antichannel_command))
     app_bot.add_handler(CommandHandler("edit", edit_command))
     app_bot.add_handler(CommandHandler("cleangroups", cleangroups_command))
