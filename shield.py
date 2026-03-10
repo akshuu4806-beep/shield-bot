@@ -359,6 +359,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     # In python-telegram-bot, arguments are stored in context.args
     args = context.args or []
+    base_reason = " ".join(args[1:]).strip() if len(args) > 1 else "No reason"
 
     # 1. Check for Reply first
     if message.reply_to_message and message.reply_to_message.from_user:
@@ -382,7 +383,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_user = await context.bot.get_chat(user_id)
                 return user_id, chat_user.first_name or "User"
             except Exception:
-                return None, None
+                return user_id, str(user_id)
 
         # Username with or without @
         candidate = raw_identifier if raw_identifier.startswith('@') else f"@{raw_identifier}"
@@ -423,13 +424,13 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if entities:
         for entity in entities:
             if entity.type == MessageEntityType.TEXT_MENTION:
-                return entity.user.id, entity.user.first_name, reason
+                return entity.user.id, entity.user.first_name, base_reason
             if entity.type == MessageEntityType.MENTION and message.text:
                 entity_username = message.text[entity.offset: entity.offset + entity.length]
                 if entity_username:
                     resolved_id, resolved_name = await _resolve_from_identifier(entity_username)
                     if resolved_id:
-                        return resolved_id, resolved_name, reason
+                        return resolved_id, resolved_name, base_reason
 
     # 3. Resolve from command args
     # Try longest prefix first so multi-word names also work:
