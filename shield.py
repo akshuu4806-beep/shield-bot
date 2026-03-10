@@ -175,13 +175,28 @@ class PersistentDB:
         if not q:
             return None
 
-        return self.users.find_one({
+        exact = self.users.find_one({
             "$or": [
                 {"username_lc": q},
                 {"first_name_lc": q},
                 {"full_name_lc": q},
             ]
         })
+        if exact:
+            return exact
+
+        # Telegram username ke partial/prefix input (e.g. @ffe) ke liye fallback
+        rx = f"^{re.escape(q)}"
+        matches = list(self.users.find({
+            "$or": [
+                {"username_lc": {"$regex": rx}},
+                {"first_name_lc": {"$regex": rx}},
+                {"full_name_lc": {"$regex": rx}},
+            ]
+        }).limit(2))
+
+        # Sirf unique match ho tabhi auto-resolve karein
+        return matches[0] if len(matches) == 1 else None
         
     def add_group(self, chat_id, title="Unknown Group"):
         self.groups.update_one({"_id": chat_id}, {"$set": {"title": title}}, upsert=True)
