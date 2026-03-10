@@ -394,6 +394,10 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Support @username, username, and t.me/username formats
         if "t.me/" in raw_identifier.lower():
             raw_identifier = raw_identifier.rstrip('/').split('/')[-1]
+
+        # Username token ko safe normalize karo (underscores allowed: @raj_123)
+        if raw_identifier.startswith('@'):
+            raw_identifier = raw_identifier.split()[0].rstrip(",.;:!?)]}\"'")
             
         # User ID
         if raw_identifier.lstrip('-').isdigit():
@@ -459,7 +463,16 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     if resolved_id:
                         return resolved_id, resolved_name, base_reason
 
-    # 3. Resolve from command args
+    # 3. Fast path for telegram username/link based commands.
+    # e.g. /allow @raj_123 reason
+    first_arg = (args[0] or "").strip() if args else ""
+    username_like = first_arg.startswith('@') or 't.me/' in first_arg.lower()
+    if username_like:
+        resolved_id, resolved_name = await _resolve_from_identifier(first_arg)
+        if resolved_id:
+            return resolved_id, resolved_name, base_reason
+
+    # 4. Resolve from command args
     # Try longest prefix first so multi-word names also work:
     # /allow John Doe spammer -> identifier="John Doe", reason="spammer"
     for split_at in range(len(args), 0, -1):
@@ -469,7 +482,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         resolved_id, resolved_name = await _resolve_from_identifier(candidate_identifier)
         if resolved_id:
             return resolved_id, resolved_name, reason
-
+            
     # If nothing matches
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
     
