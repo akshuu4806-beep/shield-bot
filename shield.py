@@ -372,21 +372,33 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     async def _resolve_from_identifier(raw_identifier: str):
         """Resolve user from ID, @username, or exact name."""
-        raw_identifier = (raw_identifier or "").strip()
+        raw_identifier = (raw_identifier or "").strip().strip(",.;:!?")
         if not raw_identifier:
             return None, None
+
+        # Support @username, username, and t.me/username formats
+        if "t.me/" in raw_identifier.lower():
+            raw_identifier = raw_identifier.rstrip('/').split('/')[-1]
             
         # User ID
         if raw_identifier.lstrip('-').isdigit():
+            user_id = int(raw_identifier)
             try:
-                user_id = int(raw_identifier)
                 chat_user = await context.bot.get_chat(user_id)
                 return user_id, chat_user.first_name or "User"
             except Exception:
                 return user_id, str(user_id)
 
+        username_key = raw_identifier.lstrip('@')
+
+        # Exact username/name match from local DB (do this before get_chat fallback)
+        cached_user = db.find_user_by_name_or_username(username_key)
+        if cached_user:
+            return cached_user.get("_id"), cached_user.get("full_name") or cached_user.get("first_name") or "User"
+
+
         # Username with or without @
-        candidate = raw_identifier if raw_identifier.startswith('@') else f"@{raw_identifier}"
+        candidate = f"@{username_key}" if username_key else ""
         if len(candidate) > 1:
             try:
                 chat_user = await context.bot.get_chat(candidate)
@@ -394,7 +406,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception:
                 pass
 
-        # Exact name/username match from local DB
+        # Retry exact name/username in case non-username text was supplied
         cached_user = db.find_user_by_name_or_username(raw_identifier)
         if cached_user:
             return cached_user.get("_id"), cached_user.get("full_name") or cached_user.get("first_name") or "User"
@@ -563,7 +575,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👥 **USER MANAGEMENT**\n"
         "• `/allow` : Whitelist a user\n"
         "• `/unallow` : Remove from whitelist\n"
-        "• `/aplist` : List whitelist users\n"
+        "• `/allowlist` : List whitelist users\n"
     )
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
             await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -894,7 +906,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👥 **USER MANAGEMENT**\n"
         "• `/allow` : Whitelist a user\n"
         "• `/unallow` : Remove from whitelist\n"
-        "• `/aplist` : List whitelist users\n"
+        "• `/allowlist` : List whitelist users\n"
     )
 
     chat_type = update.effective_chat.type
@@ -1117,7 +1129,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-async def aplist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def allowlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -2524,7 +2536,7 @@ def main():
     app_bot.add_handler(CommandHandler("config", set_config_command))
     app_bot.add_handler(CommandHandler("status", status_command))
     app_bot.add_handler(CommandHandler("grouplist", grouplist_command))
-    app_bot.add_handler(CommandHandler("aplist", aplist_command))
+    app_bot.add_handler(CommandHandler("allowlist", allowlist_command))
     app_bot.add_handler(CommandHandler("getlink", getlink_command))
     app_bot.add_handler(CommandHandler("gmsg", gmsg_command))
     app_bot.add_handler(CommandHandler("allow", allow_command))
