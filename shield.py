@@ -369,9 +369,6 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not args:
         return None, None, "❗ Kripya kisi ko reply karein, ya User ID/Username/Name mention karein."
 
-    identifier = args[0]
-    reason = " ".join(args[1:]) if len(args) > 1 else "No reason"
-
     async def _resolve_from_identifier(raw_identifier: str):
         """Resolve user from ID, @username, or exact name."""
         raw_identifier = (raw_identifier or "").strip()
@@ -434,10 +431,16 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     if resolved_id:
                         return resolved_id, resolved_name, reason
 
-    # 3. Check for User ID / @Username
-    resolved_id, resolved_name = await _resolve_from_identifier(identifier)
-    if resolved_id:
-        return resolved_id, resolved_name, reason
+    # 3. Resolve from command args
+    # Try longest prefix first so multi-word names also work:
+    # /allow John Doe spammer -> identifier="John Doe", reason="spammer"
+    for split_at in range(len(args), 0, -1):
+        candidate_identifier = " ".join(args[:split_at]).strip()
+        reason = " ".join(args[split_at:]).strip() or "No reason"
+
+        resolved_id, resolved_name = await _resolve_from_identifier(candidate_identifier)
+        if resolved_id:
+            return resolved_id, resolved_name, reason
 
     # If nothing matches
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
