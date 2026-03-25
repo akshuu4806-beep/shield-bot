@@ -2421,7 +2421,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     adder = update.message.from_user
     
-    # Bypass check for Admins and allowd users (For Anti-Bot)
+    # Bypass check for Admins only (allowed users no longer exempt)
     is_adder_admin = False
     if adder.id in ADMIN_IDS:
         is_adder_admin = True
@@ -2432,8 +2432,8 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 is_adder_admin = True
         except: pass
         
-    is_adder_exempt = is_adder_admin or db.is_allowed(adder.id)
-        
+    is_adder_exempt = is_adder_admin   # only admins can add bots
+    
     # 👇 EK HI LOOP MEIN DONO CHECKS HONGE 👇
     for new_member in update.message.new_chat_members:
         
@@ -2467,7 +2467,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue # Agar ye GBanned hai, toh agli bot checking mat karo, sidha next member par jao
 
         # 2. ANTI-BOT CHECK (Agar join karne wala GBanned nahi hai, tab ye check hoga)
-        # Ye tabhi check hoga jab add karne wala admin ya allowd nahi hai
+        # Ye tabhi check hoga jab add karne wala admin nahi hai
         if not is_adder_exempt:
             if new_member.is_bot and new_member.id != context.bot.id:
                 try:
@@ -2486,7 +2486,7 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     try:
                         await context.bot.send_message(chat_id, error_msg)
                     except:
-                        pass   
+                        pass
 
 # ========== BOT STATUS TRACKER ==========
 async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
