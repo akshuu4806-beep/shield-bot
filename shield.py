@@ -68,6 +68,8 @@ SIGHTENGINE_KEYS = [
     {"user": os.environ.get("SE_USER_3"), "secret": os.environ.get("SE_SECRET_3")}
 ]
 
+# global ya top me
+bio_violators = set()
 # ========== DATABASE CLASS ==========
 class PersistentDB:
     def __init__(self):
@@ -2485,10 +2487,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # BIO SHIELD
         try:
             u_chat = await context.bot.get_chat(user.id)
-            if u_chat.bio and has_link(u_chat.bio): 
+            bio = u_chat.bio or ""
+
+            if has_link(bio):
                 violation, reason = True, "Link in Bio"
                 db.update_stat('bio_caught')
-        except: pass
+
+                # 👇 mark user as bio violator
+                bio_violators.add(user.id)
+
+            else:
+                # 👇 agar pehle bio violator tha aur ab clean hai → reset
+                if user.id in bio_violators:
+                    bio_violators.remove(user.id)
+
+        except:
+            pass
+        
         
         # ANTI-LINK
         if not violation and has_link(msg_text): 
