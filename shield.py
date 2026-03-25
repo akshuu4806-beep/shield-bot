@@ -68,6 +68,8 @@ SIGHTENGINE_KEYS = [
     {"user": os.environ.get("SE_USER_3"), "secret": os.environ.get("SE_SECRET_3")}
 ]
 
+# global ya top me
+bio_violators = set()
 # ========== DATABASE CLASS ==========
 class PersistentDB:
     def __init__(self):
@@ -132,10 +134,13 @@ class PersistentDB:
         
     def get_config(self, chat_id):
         s = self.group_config.find_one({"_id": chat_id})
-        # 'mute_hours' ki jagah hum 'action' return kar rahe hain (Index 2 par)
         return (s.get("delay_minutes", 1), s.get("warn_limit", 3), s.get("action", "mute"), 
-                s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1)) if s else (1, 3, "mute", 0, 1, 1)
+                s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1),
+                s.get("anti_bot", 1)) if s else (1, 3, "mute", 0, 1, 1, 1)
 
+    def set_anti_bot(self, chat_id, enabled):
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"anti_bot": 1 if enabled else 0}}, upsert=True)
+    
     def set_warn_limit(self, chat_id, warn_limit):
         self.group_config.update_one({"_id": chat_id}, {"$set": {"warn_limit": warn_limit}}, upsert=True)
 
@@ -668,6 +673,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     # 👆 YAHAN TAK 👆
 
+    # Anti-Bot Toggle Button (accessible only to admins)
+    if query.data == "antibot_toggle":
+        # Check admin rights
+        is_private = update.effective_chat.type == 'private'
+        is_admin = is_private or await is_user_admin(update, context)
+        if not is_admin:
+            await query.answer("❌ You are not an administrator", show_alert=True)
+            return
+
+        chat_id = update.effective_chat.id
+        config = db.get_config(chat_id)
+        current = config[6] if len(config) > 6 else 1
+        new_state = not current
+        db.set_anti_bot(chat_id, new_state)
+
+        status = "ENABLED ✅" if new_state else "DISABLED ❌"
+        text = (
+            f"🤖 **Anti‑Bot Configuration**\n\n"
+            f"🚫 **Status:** {status}\n\n"
+            f"When enabled, only administrators can add bots to this group.\n"
+            f"Non‑admins who try to add a bot will be warned and the bot will be kicked.\n\n"
+            f"📌 **Note:** The bot needs **Ban** and **Delete Messages** permissions."
+        )
+        keyboard = [
+            [InlineKeyboardButton(f"Toggle {status}", callback_data="antibot_toggle")],
+            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await query.answer()
+        return
     
     # ==========================================
     # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
@@ -727,6 +762,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception: pass
             return
 
+        # 5. Back to main config menu
+        elif query.data == "cfg_main":
+            # Re‑render the main config menu
+            config = db.get_config(chat_id)
+            warn_limit = config[1]
+            action = config[2]
+            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
+            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
+            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
+            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+            text = (
+                f"⚙️ **Group Configuration**\n\n"
+                f"⚠️ **Limit:** {warn_limit}\n"
+                f"🔨 **Action:** {action.upper()}\n"
+                f"✏️ **Edit Guard:** {edit_status}"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
+                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
+                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await query.answer()
+            return
+        
         # ==========================================
         # 5. UI REFRESHER (Sab kuch yahan update hoga instantly!)
         # ==========================================
@@ -1105,7 +1167,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_text = (
                 f"✅ <b>MEDIA CLEANER UPDATED</b>\n\n"
                 f"⏱️ <b>New Delay:</b> <code>{mins} Minutes</code>\n\n"
-                f"🗑️ <i>Now deleted all new media will be automatically</i>"
+                f"🗑️ <i>All new media will now be automatically deleted after {mins} minutes.</i>"
             )
             sent_msg = await update.message.reply_text(success_text, parse_mode='HTML')
             
@@ -1118,18 +1180,28 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             sent_msg = await update.message.reply_text(error_text, parse_mode='HTML')
     else:
-        # Attractive Current Status Message (When no arguments are passed)
+        # Enhanced status message with full explanation
         current_delay = db.get_config(chat_id)[0]
+        
         status_text = (
-            f"⏱️ <b>Current Media Delay:</b> <code>{current_delay} Minutes</code>\n\n"
-            f"<i>Media files are currently being auto-deleted after {current_delay} minutes.</i>\n\n"
-            f"💡 <b>To change this, use:</b>\n<code>/delay <minutes></code>"
+            f"⏱️ <b>MEDIA AUTO‑DELETE CONFIGURATION</b>\n\n"
+            f"🔹 <b>Current Delay:</b> <code>{current_delay} Minute(s)</code>\n\n"
+            f"🔹 <b>What does this do?</b>\n"
+            f"   • All photos, videos, GIFs, stickers, and documents sent in this group\n"
+            f"   • Will be <b>automatically deleted</b> after the set delay time.\n"
+            f"   • Helps keep the group clean and prevents media spam.\n\n"
+            f"🔹 <b>How to change it?</b>\n"
+            f"   • Use: <code>/delay &lt;minutes&gt;</code>\n"
+            f"   • Example: <code>/delay 3</code> → media deleted after 3 minutes\n"
+            f"   • Set <code>/delay 0</code> to disable auto‑deletion.\n\n"
+            f"🔹 <b>Note:</b>\n"
+            f"   • The bot must have <b>Delete Messages</b> permission to work.\n"
+            f"   • This setting affects <b>all new media</b> from the moment it's set.\n\n"
+            f"<i>💡 Type <code>/delay 5</code> to change the delay to 5 minutes.</i>"
         )
+        
         sent_msg = await update.message.reply_text(status_text, parse_mode='HTML')
-
-    # Auto-delete the bot's response after 30 seconds to keep the group clean
-    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=sent_msg.message_id)
-
+    
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
@@ -1400,15 +1472,29 @@ async def sudolist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only the Bot Owner can use this command.")
         return
 
-    sudos = db.get_sudos()
-    if not sudos:
+    sudo_ids = db.get_sudos()
+    if not sudo_ids:
         await update.message.reply_text("📭 The Sudo list is empty.")
         return
     
     text = "👑 **Sudo Admins:**\n\n"
-    for idx, uid in enumerate(sudos, 1):
-        text += f"{idx}. `{uid}`\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
+    for idx, uid in enumerate(sudo_ids, 1):
+        # Try to get user details from database
+        user_info = db.users.find_one({"_id": uid})
+        if user_info:
+            name = user_info.get("full_name") or user_info.get("first_name") or "Unknown"
+            mention = f'<a href="tg://user?id={uid}">{html.escape(name)}</a>'
+            text += f"{idx}. {mention} (<code>{uid}</code>)\n"
+        else:
+            # Fallback: just show ID
+            text += f"{idx}. <code>{uid}</code>\n"
+    
+    # If the text is too long, split into multiple messages or truncate
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (List too long, truncated)"
+    
+    await update.message.reply_text(text, parse_mode='HTML')
+    
 
 # ==========================================
 # CUSTOM BLOCKLIST COMMANDS (SUDO/OWNER)
@@ -1717,6 +1803,88 @@ async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     state = (state_str == "on")
     db.set_anti_channel(update.effective_chat.id, state)
     await update.message.reply_text(f"🚫 <b>Anti-Channel</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
+
+async def antibot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+
+    if not args:
+        # Show configuration menu (similar to /config but for anti-bot)
+        if update.effective_chat.type == 'private':
+            await update.message.reply_text("❌ This command works in groups only.")
+            return
+        if not await is_user_admin(update, context) and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ You do not have permission to use this command.")
+            return
+
+        chat_id = update.effective_chat.id
+        config = db.get_config(chat_id)
+        anti_bot_enabled = config[6] if len(config) > 6 else 1
+        status = "ENABLED ✅" if anti_bot_enabled else "DISABLED ❌"
+
+        text = (
+            f"🤖 **Anti‑Bot Configuration**\n\n"
+            f"🚫 **Status:** {status}\n\n"
+            f"When enabled, only administrators can add bots to this group.\n"
+            f"Non‑admins who try to add a bot will be warned and the bot will be kicked.\n\n"
+            f"📌 **Note:** The bot needs **Ban** and **Delete Messages** permissions."
+        )
+        keyboard = [
+            [InlineKeyboardButton(f"Toggle {status}", callback_data="antibot_toggle")],
+            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+        ]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return
+
+    # Handle arguments
+    # Global control: /antibot all on/off (owner/sudo only)
+    if args[0].lower() == "all" and len(args) == 2:
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ Only Owner and Sudo Admins can use global control.")
+            return
+        state_str = args[1].lower()
+        if state_str not in ['on', 'off']:
+            await update.message.reply_text("❗ **Usage:** `/antibot all on` or `off`", parse_mode='Markdown')
+            return
+        state = (state_str == "on")
+        groups = db.get_groups()
+        for chat_id, _ in groups:
+            db.set_anti_bot(chat_id, state)
+        await update.message.reply_text(f"✅ **Global Update:** Anti‑Bot is now **{'ENABLED' if state else 'DISABLED'}** in ALL {len(groups)} groups.", parse_mode='Markdown')
+        return
+
+    # Remote control: /antibot <serial_no> on/off (owner/sudo only)
+    if len(args) == 2 and args[0].isdigit():
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ Only Owner and Sudo Admins can use remote control.")
+            return
+        s_no = int(args[0])
+        state_str = args[1].lower()
+        groups = db.get_groups()
+        if s_no < 1 or s_no > len(groups):
+            await update.message.reply_text("❌ Invalid Serial Number.")
+            return
+        target_chat_id = groups[s_no - 1][0]
+        target_title = groups[s_no - 1][1]
+        state = (state_str == "on")
+        db.set_anti_bot(target_chat_id, state)
+        await update.message.reply_text(f"✅ **Anti‑Bot** is now **{'ENABLED' if state else 'DISABLED'}** for group:\n📍 **{html.escape(target_title)}**", parse_mode='HTML')
+        return
+
+    # Normal control in current group: /antibot on/off
+    state_str = args[0].lower()
+    if state_str not in ['on', 'off']:
+        await update.message.reply_text("❗ **Usage:** `/antibot on` or `/antibot off`", parse_mode='Markdown')
+        return
+
+    if not await is_user_admin(update, context) and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ You do not have permission to use this command here.")
+        return
+
+    state = (state_str == "on")
+    db.set_anti_bot(update.effective_chat.id, state)
+    await update.message.reply_text(f"🤖 **Anti‑Bot** is now **{'ENABLED' if state else 'DISABLED'}** in this group.", parse_mode='Markdown')
+    
 
 async def check_image_nsfw_api(file_path: str) -> bool:
     """Sightengine API with Image Format Fix & Multiple Keys Fallback"""
@@ -2127,7 +2295,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db.add_group(chat_id, update.effective_chat.title)
     # 'mute_hrs' ki jagah ab 'action' fetch kar rahe hain
-    delay_min, warn_limit, action, _, anti_ch, nsfw_enabled = db.get_config(chat_id)
+    delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled = db.get_config(chat_id)
     
     # Media Logic (Applies to everyone)
     is_media = any([update.message.photo, update.message.video, update.message.document, 
@@ -2319,10 +2487,24 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # BIO SHIELD
         try:
             u_chat = await context.bot.get_chat(user.id)
-            if u_chat.bio and has_link(u_chat.bio): 
+            bio = u_chat.bio or ""
+
+            if has_link(bio):
                 violation, reason = True, "Link in Bio"
                 db.update_stat('bio_caught')
-        except: pass
+
+                # 👇 mark user as bio violator
+                bio_violators.add(user.id)
+
+            else:
+                # 👇 agar pehle bio violator tha aur ab clean hai → reset
+                if user.id in bio_violators:
+                    db.reset_warnings(user.id)
+                    bio_violators.remove(user.id)
+
+        except:
+            pass
+        
         
         # ANTI-LINK
         if not violation and has_link(msg_text): 
@@ -2361,10 +2543,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if count > warn_limit:
                 if action == "mute":
                     msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
-                    asyncio.create_task(delete_after_delay(msg, 30))
+                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
                 elif action == "ban":
                     msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already banned.</b>", parse_mode='HTML')
-                    asyncio.create_task(delete_after_delay(msg, 30))
+                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
                 return
 
             # CASE 2: EXACT LIMIT PAR PAHUH GAYA (Pehli baar Mute/Ban karna hai)
@@ -2420,7 +2602,14 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     chat_id = update.effective_chat.id
     adder = update.message.from_user
-    
+
+    # Fetch anti_bot setting from database (7th element)
+    config = db.get_config(chat_id)
+    anti_bot_enabled = config[6] if len(config) > 6 else 1  # default on
+
+    if not anti_bot_enabled:
+        return  # Feature is disabled in this group
+
     # Bypass check for Admins only (allowed users no longer exempt)
     is_adder_admin = False
     if adder.id in ADMIN_IDS:
@@ -2434,59 +2623,41 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     is_adder_exempt = is_adder_admin   # only admins can add bots
     
-    # 👇 EK HI LOOP MEIN DONO CHECKS HONGE 👇
+    # Loop through all new members
     for new_member in update.message.new_chat_members:
         
-        # 1. NAYA GBAN JOIN CHECK (Priority par chalega)
+        # 1. Check if the joining user is globally banned
         is_gbanned, _ = db.is_gbanned(new_member.id)
         if is_gbanned:
             try:
-                # Pehle user ko ban karo
                 await context.bot.ban_chat_member(chat_id, new_member.id)
-                
-                # Group mein message bhejo
                 alert_msg = await context.bot.send_message(
                     chat_id, 
                     f"🚨 {new_member.mention_html()} was globally banned and has been removed.\n\n"
-                    "**Reason:** you are global ban contact bot owner for free (@anurag_9X)",
+                    "**Reason:** You are globally banned. Contact bot owner (@anurag_9X)",
                     parse_mode='HTML'
                 )
-                # Group clean rakhne ke liye ye alert 10 sec baad delete
                 context.job_queue.run_once(delete_msg_job, 10, chat_id=chat_id, data=alert_msg.message_id)
-
-                # User ko DMs mein private message bhejo
                 try:
-                    await context.bot.send_message(
-                        new_member.id,
-                        "you are global ban contact bot owner for free"
-                    )
-                except Exception:
-                    pass # Agar block kiya hoga toh ignore karega
+                    await context.bot.send_message(new_member.id, "You are globally banned. Contact bot owner (@anurag_9X)")
+                except: pass
             except Exception: 
                 pass
-            continue # Agar ye GBanned hai, toh agli bot checking mat karo, sidha next member par jao
+            continue
 
-        # 2. ANTI-BOT CHECK (Agar join karne wala GBanned nahi hai, tab ye check hoga)
-        # Ye tabhi check hoga jab add karne wala admin nahi hai
+        # 2. Anti-Bot check (only if adder is not an admin)
         if not is_adder_exempt:
             if new_member.is_bot and new_member.id != context.bot.id:
                 try:
-                    # KICK the bot instantly (ban followed by immediate unban)
                     await context.bot.ban_chat_member(chat_id, new_member.id)
                     await context.bot.unban_chat_member(chat_id, new_member.id)
-                    
-                    # Send the exact warning notification requested for the user
-                    alert_text = f"{adder.mention_html()} you cannot add bots in the group otherwise you restricted from this chat ."
+                    alert_text = f"{adder.mention_html()} you cannot add bots in the group."
                     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Delete Message", callback_data="delete_msg")]])
                     await context.bot.send_message(chat_id, alert_text, parse_mode='HTML', reply_markup=kb)
+                except Exception:
+                    error_msg = "Bot cannot be kicked because I don't have permission."
+                    await context.bot.send_message(chat_id, error_msg)
                     
-                except Exception as e:
-                    # When the bot lacks ban permission
-                    error_msg = "Bot cannot be kicked because I have not permission to kick."
-                    try:
-                        await context.bot.send_message(chat_id, error_msg)
-                    except:
-                        pass 
 
 # ========== BOT STATUS TRACKER ==========
 async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2597,6 +2768,7 @@ def main():
     app_bot.add_handler(CommandHandler("gban", gban_command))
     app_bot.add_handler(CommandHandler("ungban", ungban_command))
     app_bot.add_handler(CommandHandler("gbanlist", gbanlist_command))
+    app_bot.add_handler(CommandHandler("antibot", antibot_command))
 
     app_bot.add_handler(CallbackQueryHandler(button_handler))
     app_bot.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.ChatType.GROUPS, edited_message_handler))
