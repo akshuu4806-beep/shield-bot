@@ -1105,7 +1105,7 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_text = (
                 f"✅ <b>MEDIA CLEANER UPDATED</b>\n\n"
                 f"⏱️ <b>New Delay:</b> <code>{mins} Minutes</code>\n\n"
-                f"🗑️ <i>Now deleted all new media will be automatically</i>"
+                f"🗑️ <i>All new media will now be automatically deleted after {mins} minutes.</i>"
             )
             sent_msg = await update.message.reply_text(success_text, parse_mode='HTML')
             
@@ -1118,18 +1118,31 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             sent_msg = await update.message.reply_text(error_text, parse_mode='HTML')
     else:
-        # Attractive Current Status Message (When no arguments are passed)
+        # Enhanced status message with full explanation
         current_delay = db.get_config(chat_id)[0]
+        
         status_text = (
-            f"⏱️ <b>Current Media Delay:</b> <code>{current_delay} Minutes</code>\n\n"
-            f"<i>Media files are currently being auto-deleted after {current_delay} minutes.</i>\n\n"
-            f"💡 <b>To change this, use:</b>\n<code>/delay <minutes></code>"
+            f"⏱️ <b>MEDIA AUTO‑DELETE CONFIGURATION</b>\n\n"
+            f"🔹 <b>Current Delay:</b> <code>{current_delay} Minute(s)</code>\n\n"
+            f"🔹 <b>What does this do?</b>\n"
+            f"   • All photos, videos, GIFs, stickers, and documents sent in this group\n"
+            f"   • Will be <b>automatically deleted</b> after the set delay time.\n"
+            f"   • Helps keep the group clean and prevents media spam.\n\n"
+            f"🔹 <b>How to change it?</b>\n"
+            f"   • Use: <code>/delay &lt;minutes&gt;</code>\n"
+            f"   • Example: <code>/delay 3</code> → media deleted after 3 minutes\n"
+            f"   • Set <code>/delay 0</code> to disable auto‑deletion.\n\n"
+            f"🔹 <b>Note:</b>\n"
+            f"   • The bot must have <b>Delete Messages</b> permission to work.\n"
+            f"   • This setting affects <b>all new media</b> from the moment it's set.\n\n"
+            f"<i>💡 Type <code>/delay 5</code> to change the delay to 5 minutes.</i>"
         )
+        
         sent_msg = await update.message.reply_text(status_text, parse_mode='HTML')
 
     # Auto-delete the bot's response after 30 seconds to keep the group clean
     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=sent_msg.message_id)
-
+    
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
@@ -1400,15 +1413,29 @@ async def sudolist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only the Bot Owner can use this command.")
         return
 
-    sudos = db.get_sudos()
-    if not sudos:
+    sudo_ids = db.get_sudos()
+    if not sudo_ids:
         await update.message.reply_text("📭 The Sudo list is empty.")
         return
     
     text = "👑 **Sudo Admins:**\n\n"
-    for idx, uid in enumerate(sudos, 1):
-        text += f"{idx}. `{uid}`\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
+    for idx, uid in enumerate(sudo_ids, 1):
+        # Try to get user details from database
+        user_info = db.users.find_one({"_id": uid})
+        if user_info:
+            name = user_info.get("full_name") or user_info.get("first_name") or "Unknown"
+            mention = f'<a href="tg://user?id={uid}">{html.escape(name)}</a>'
+            text += f"{idx}. {mention} (<code>{uid}</code>)\n"
+        else:
+            # Fallback: just show ID
+            text += f"{idx}. <code>{uid}</code>\n"
+    
+    # If the text is too long, split into multiple messages or truncate
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (List too long, truncated)"
+    
+    await update.message.reply_text(text, parse_mode='HTML')
+    
 
 # ==========================================
 # CUSTOM BLOCKLIST COMMANDS (SUDO/OWNER)
