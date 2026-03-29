@@ -2157,12 +2157,18 @@ async def listlocal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== HANDLERS ==========
 async def edited_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.edited_message
-    if not msg or not msg.from_user: return
+    if not msg or not msg.from_user:
+        return
+
+    # 🔥 FIX: Ignore edits made by the bot itself
+    if msg.from_user.id == context.bot.id:
+        return
 
     # 👇 ADD THIS CHECK BEFORE DOING ANYTHING ELSE 👇
     if not db.is_edit_guard_enabled(msg.chat_id):
-        return # If Edit Guard is OFF, do nothing and let the user edit!
-    # 👆 ADD THIS CHECK 👆
+        return
+
+    # ... rest of the handler unchanged
 
     # 👇 NEW ADMIN CHECK: Do nothing if the user is an Admin, Owner, or Sudo 👇
     if await is_user_admin(update, context) or db.is_sudo(msg.from_user.id):
