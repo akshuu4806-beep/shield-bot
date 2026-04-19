@@ -2337,8 +2337,34 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 blocked_sticker_found = True
                 
         # 🟢 CASE A: AGAR BLOCKED WORD MILA (Abuse)
-        if blocked_word_found:
-            db.update_stat('abuse_caught')
+if blocked_word_found:
+    db.update_stat('abuse_caught')
+    
+    # 👇 PEHLE DELETE KARO
+    try:
+        await update.message.delete()
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+            try:
+                await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+            except:
+                pass
+
+    # 👇 PHIR WARNING BHEJO
+    current_time = time.time()
+    if current_time - context.chat_data.get(f"last_word_alert_{user.id}", 0) > 10:
+        context.chat_data[f"last_word_alert_{user.id}"] = current_time
+        try:
+            alert_msg = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>", 
+                parse_mode='HTML'
+            )
+            context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
+        except Exception: pass
+    
+    return
             
             # Add message to the bulk delete queue
             BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
@@ -2364,8 +2390,37 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return # Yahan code ruk jayega
 
         # 🔴 CASE B: AGAR BLOCKED STICKER MILA
-        elif blocked_sticker_found:
-            db.update_stat('nsfw_blocked')
+elif blocked_sticker_found:
+    db.update_stat('nsfw_blocked')
+    
+    # 👇 PEHLE DELETE KARO
+    try:
+        await update.message.delete()
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+            try:
+                await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+            except:
+                pass
+
+    # 👇 PHIR ALERT BHEJO
+    current_time = time.time()
+    if current_time - context.chat_data.get(f"last_sticker_alert_{user.id}", 0) > 10:
+        context.chat_data[f"last_sticker_alert_{user.id}"] = current_time
+        
+        admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
+        admin_alert = (
+            f"🚨 <b>Blocked Sticker & Deleted</b>\n\n"
+            f"👤 <b>Sender:</b> {user.mention_html()}\n"
+            f"{admin_tags}" 
+        )
+        try:
+            alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
+            context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
+        except Exception: pass
+    
+    return
             
             # Add sticker to the bulk delete queue
             BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
@@ -2438,8 +2493,45 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(temp_file_path)
             
             if is_explicit:
-                # 👇 NSFW counter ko badhane ke liye
-                db.update_stat('nsfw_blocked')
+    # 👇 NSFW counter ko badhane ke liye
+    db.update_stat('nsfw_blocked')
+
+    # 👇 PEHLE DELETE KARO
+    try:
+        await update.message.delete()
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+            try:
+                await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+            except:
+                pass
+
+    # 👇 PHIR ALERT BHEJO
+    current_time = time.time()
+    if current_time - context.chat_data.get(f"last_nsfw_alert_{user.id}", 0) > 10:
+        context.chat_data[f"last_nsfw_alert_{user.id}"] = current_time
+        
+        admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
+        
+        admin_alert = (
+            f"🚨 <b>NSFW Content Detected</b>\n\n"
+            f"👤 <b>Sender:</b> {user.mention_html()}"
+            f"{admin_tags}"
+        )
+        
+        try:
+            nsfw_alert_msg = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=admin_alert, 
+                parse_mode='HTML', 
+                disable_notification=True 
+            )
+            context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
+        except Exception as e:
+            print(f"Group Alert Error: {e}")
+            
+    return
 
                 # 1. Add image to the bulk delete queue
                 BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
