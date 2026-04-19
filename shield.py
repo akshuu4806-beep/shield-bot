@@ -2314,14 +2314,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_text = update.message.text or update.message.caption
     
     # ===================================================================
-    # CUSTOM BLOCKLISTS (Words & Sticker Packs) -> Runs only if NSFW is ON
+    # CUSTOM BLOCKLISTS (Words & Sticker Packs)
     # ===================================================================
     if nsfw_enabled:
         blocked_word_found = False
         blocked_sticker_found = False
         caught_word = ""
-        
-        # 1. Check Custom Words (Global + Local combined)
+    
+        # 1. Check Custom Words
         if msg_text:
             all_blocked_words = db.get_blocked_words() + db.get_local_words(chat_id)
             for word in all_blocked_words:
@@ -2329,232 +2329,110 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     blocked_word_found = True
                     caught_word = word  
                     break
-                    
-        # 2. Check Custom Sticker Packs (Global + Local combined)
+    
+        # 2. Check Custom Sticker Packs
         if not blocked_word_found and update.message.sticker and update.message.sticker.set_name:
             all_blocked_stickers = db.get_blocked_stickers() + db.get_local_stickers(chat_id)
             if update.message.sticker.set_name in all_blocked_stickers:
                 blocked_sticker_found = True
-                
-        # 🟢 CASE A: AGAR BLOCKED WORD MILA (Abuse)
-if blocked_word_found:
-    db.update_stat('abuse_caught')
     
-    # 👇 PEHLE DELETE KARO
-    try:
-        await update.message.delete()
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+        # 🟢 CASE A: BLOCKED WORD
+        if blocked_word_found:
+            db.update_stat('abuse_caught')
             try:
-                await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-            except:
-                pass
-
-    # 👇 PHIR WARNING BHEJO
-    current_time = time.time()
-    if current_time - context.chat_data.get(f"last_word_alert_{user.id}", 0) > 10:
-        context.chat_data[f"last_word_alert_{user.id}"] = current_time
-        try:
-            alert_msg = await context.bot.send_message(
-                chat_id=chat_id, 
-                text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>", 
-                parse_mode='HTML'
-            )
-            context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
-        except Exception: pass
-    
-    return
-            
-            # Add message to the bulk delete queue
-            BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
-
-            # Trigger the bulk delete job (runs after 1.5 seconds to catch all spam)
-            job_name = f"bulk_del_{chat_id}"
-            if not context.job_queue.get_jobs_by_name(job_name):
-                context.job_queue.run_once(process_bulk_delete, 1.5, chat_id=chat_id, name=job_name)
-
-            # Anti-Spam Alert Cooldown: Only send 1 warning every 10 seconds per user
+                await update.message.delete()
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                    try:
+                        await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+                    except:
+                        pass
+        
             current_time = time.time()
             if current_time - context.chat_data.get(f"last_word_alert_{user.id}", 0) > 10:
                 context.chat_data[f"last_word_alert_{user.id}"] = current_time
                 try:
                     alert_msg = await context.bot.send_message(
                         chat_id=chat_id, 
-                        text=f"🚫 {user.mention_html()}, you cannot use the blocked word: <b>{html.escape(caught_word)}</b>", 
+                        text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>", 
                         parse_mode='HTML'
                     )
                     context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
                 except Exception: pass
-            
-            return # Yahan code ruk jayega
-
-        # 🔴 CASE B: AGAR BLOCKED STICKER MILA
-elif blocked_sticker_found:
-    db.update_stat('nsfw_blocked')
+            return
     
-    # 👇 PEHLE DELETE KARO
-    try:
-        await update.message.delete()
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+        # 🔴 CASE B: BLOCKED STICKER
+        elif blocked_sticker_found:
+            db.update_stat('nsfw_blocked')
             try:
-                await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-            except:
-                pass
-
-    # 👇 PHIR ALERT BHEJO
-    current_time = time.time()
-    if current_time - context.chat_data.get(f"last_sticker_alert_{user.id}", 0) > 10:
-        context.chat_data[f"last_sticker_alert_{user.id}"] = current_time
+                await update.message.delete()
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                    try:
+                        await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+                    except:
+                        pass
         
-        admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
-        admin_alert = (
-            f"🚨 <b>Blocked Sticker & Deleted</b>\n\n"
-            f"👤 <b>Sender:</b> {user.mention_html()}\n"
-            f"{admin_tags}" 
-        )
-        try:
-            alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
-            context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
-        except Exception: pass
-    
-    return
-            
-            # Add sticker to the bulk delete queue
-            BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
-
-            # Trigger the bulk delete job
-            job_name = f"bulk_del_{chat_id}"
-            if not context.job_queue.get_jobs_by_name(job_name):
-                context.job_queue.run_once(process_bulk_delete, 1.5, chat_id=chat_id, name=job_name)
-
-            # Anti-Spam Alert Cooldown: Only send 1 admin alert every 10 seconds per user
             current_time = time.time()
             if current_time - context.chat_data.get(f"last_sticker_alert_{user.id}", 0) > 10:
                 context.chat_data[f"last_sticker_alert_{user.id}"] = current_time
-                
                 admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
-                admin_alert = (
-                    f"🚨 <b>Blocked Sticker Detected & Deleted</b>\n\n"
-                    f"👤 <b>Sender:</b> {user.mention_html()}\n"
-                    f"{admin_tags}" 
-                )
+                admin_alert = f"🚨 <b>Blocked Sticker & Deleted</b>\n\n👤 <b>Sender:</b> {user.mention_html()}\n{admin_tags}"
                 try:
                     alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
                     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
                 except Exception: pass
-            
-            return # Yahan code ruk jayega
-            
+            return
+
     # ===================================================================
-    # UNIVERSAL NSFW DETECTION (Applies to Admin/Owner/allowd too)
-    # Covers Media, Document, Video, Sticker, GIF
+    # UNIVERSAL NSFW DETECTION
     # ===================================================================
     file_id = None
     temp_file_path = f"temp_nsfw_{chat_id}_{update.message.message_id}.jpg"
 
-    # 1. Photos
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-        
-    # 2. Stickers (Static or Animated, getting thumbnail/image)
     elif update.message.sticker:
         if getattr(update.message.sticker, 'is_animated', False) or getattr(update.message.sticker, 'is_video', False):
             if update.message.sticker.thumbnail:
                 file_id = update.message.sticker.thumbnail.file_id
         else:
             file_id = update.message.sticker.file_id
-            
-    # 3. Videos (Scanning thumbnail instead of full video)
     elif update.message.video and update.message.video.thumbnail:
         file_id = update.message.video.thumbnail.file_id
-        
-    # 4. Documents (If document has a thumbnail)
     elif update.message.document and update.message.document.thumbnail:
         file_id = update.message.document.thumbnail.file_id
-        
-    # 5. Animations / GIFs
     elif update.message.animation and update.message.animation.thumbnail:
         file_id = update.message.animation.thumbnail.file_id
 
-    # Check if we found a valid file_id AND nsfw is enabled
     if file_id and nsfw_enabled:
         try:
             file = await context.bot.get_file(file_id)
             await file.download_to_drive(temp_file_path)
-            # ... (rest of the NSFW logic stays exactly the same)
-            # Call AI Scanner (Hugging Face)
             is_explicit = await check_image_nsfw_api(temp_file_path)
-            
-            # Remove temp file immediately
+        
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            
+        
             if is_explicit:
-    # 👇 NSFW counter ko badhane ke liye
-    db.update_stat('nsfw_blocked')
-
-    # 👇 PEHLE DELETE KARO
-    try:
-        await update.message.delete()
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
-            try:
-                await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-            except:
-                pass
-
-    # 👇 PHIR ALERT BHEJO
-    current_time = time.time()
-    if current_time - context.chat_data.get(f"last_nsfw_alert_{user.id}", 0) > 10:
-        context.chat_data[f"last_nsfw_alert_{user.id}"] = current_time
-        
-        admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
-        
-        admin_alert = (
-            f"🚨 <b>NSFW Content Detected</b>\n\n"
-            f"👤 <b>Sender:</b> {user.mention_html()}"
-            f"{admin_tags}"
-        )
-        
-        try:
-            nsfw_alert_msg = await context.bot.send_message(
-                chat_id=chat_id, 
-                text=admin_alert, 
-                parse_mode='HTML', 
-                disable_notification=True 
-            )
-            context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
-        except Exception as e:
-            print(f"Group Alert Error: {e}")
+                db.update_stat('nsfw_blocked')
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "can't be deleted" in error_msg or "not enough rights" in error_msg:
+                        try:
+                            await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
+                        except:
+                            pass
             
-    return
-
-                # 1. Add image to the bulk delete queue
-                BULK_DELETE_QUEUE[chat_id].append(update.message.message_id)
-
-                # Trigger the bulk delete job (runs after 1.5 seconds)
-                job_name = f"bulk_del_{chat_id}"
-                if not context.job_queue.get_jobs_by_name(job_name):
-                    context.job_queue.run_once(process_bulk_delete, 1.5, chat_id=chat_id, name=job_name)
-
-                # 2. Anti-Spam Alert Cooldown: Only send 1 admin alert every 10 seconds per user
                 current_time = time.time()
                 if current_time - context.chat_data.get(f"last_nsfw_alert_{user.id}", 0) > 10:
                     context.chat_data[f"last_nsfw_alert_{user.id}"] = current_time
-                    
-                    # 3. Silently Tag Admins in the Group
                     admin_tags = "".join([f'<a href="tg://user?id={aid}">&#8203;</a>' for aid in ADMIN_IDS])
-                    
-                    admin_alert = (
-                        f"🚨 <b>NSFW Content Detected Please Take Action</b>\n\n"
-                        f"👤 <b>Sender:</b> {user.mention_html()}"
-                        f"{admin_tags}"
-                    )
-                    
+                    admin_alert = f"🚨 <b>NSFW Content Detected</b>\n\n👤 <b>Sender:</b> {user.mention_html()}{admin_tags}"
                     try:
                         nsfw_alert_msg = await context.bot.send_message(
                             chat_id=chat_id, 
@@ -2562,18 +2440,15 @@ elif blocked_sticker_found:
                             parse_mode='HTML', 
                             disable_notification=True 
                         )
-                        # 👇 NSFW wale admin alert ko bhi 30 second baad delete karne ka timer
                         context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
                     except Exception as e:
                         print(f"Group Alert Error: {e}")
-                        
-                return # Stop processing this message further
-                
+                return
         except Exception as e:
             logger.error(f"Universal NSFW Processing Error: {e}")
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-
+            
     # ===================================================================
     # VIOLATION CHECKS (Anti-Link, Bio Shield & Anti-Virus)
     # ===================================================================
