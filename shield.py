@@ -337,20 +337,6 @@ logger = logging.getLogger(__name__)
 # ... [Aapka baki pura code yahan aayega, jaise start_command, message_handler, etc.] ...
 # Note: Maine code length ki wajah se yahan functions skip kiye hain, par aapko apne baki commands as it is rakhne hain.
 
-# async def process_bulk_delete(context: ContextTypes.DEFAULT_TYPE):
-    chat_id = context.job.chat_id
-    
-    if chat_id in BULK_DELETE_QUEUE and BULK_DELETE_QUEUE[chat_id]:
-        # Copy the list of message IDs and clear the original queue
-        msg_ids_to_delete = BULK_DELETE_QUEUE[chat_id].copy()
-        BULK_DELETE_QUEUE[chat_id].clear()
-        
-        try:
-            # This PTB method deletes up to 100 messages at once!
-            await context.bot.delete_messages(chat_id=chat_id, message_ids=msg_ids_to_delete)
-        except Exception as e:
-            pass # Ignore if messages are already deleted
-
 # ========== HELPERS ==========
 async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
