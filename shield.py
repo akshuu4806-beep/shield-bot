@@ -5,6 +5,7 @@ import html
 import asyncio
 import logging
 import pymongo
+from telegram.ext import ApplicationHandlerStop
 from flask import Flask
 from threading import Thread
 from datetime import datetime, timedelta
@@ -336,7 +337,7 @@ logger = logging.getLogger(__name__)
 # ... [Aapka baki pura code yahan aayega, jaise start_command, message_handler, etc.] ...
 # Note: Maine code length ki wajah se yahan functions skip kiye hain, par aapko apne baki commands as it is rakhne hain.
 
-async def process_bulk_delete(context: ContextTypes.DEFAULT_TYPE):
+# async def process_bulk_delete(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.chat_id
     
     if chat_id in BULK_DELETE_QUEUE and BULK_DELETE_QUEUE[chat_id]:
@@ -556,15 +557,33 @@ async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"**{safe_name}** (`{target_id}`) was not in the whitelist.", parse_mode='Markdown')
 
-    # ========== JOBS & CALLBACKS ==========
+async def flush_bulk_deletes(context: ContextTypes.DEFAULT_TYPE):
+    """Scheduled job: har 2 seconds mein queue ko process karega"""
+    for chat_id, msg_ids in list(BULK_DELETE_QUEUE.items()):
+        if not msg_ids:
+            continue
+        to_delete = msg_ids.copy()
+        BULK_DELETE_QUEUE[chat_id].clear()
+        # delete_messages at most 100 at a time
+        for i in range(0, len(to_delete), 100):
+            batch = to_delete[i:i+100]
+            try:
+                await context.bot.delete_messages(chat_id=chat_id, message_ids=batch)
+            except Exception:
+                # Agar batch delete fail ho to individually delete karo
+                for mid in batch:
+                    try:
+                        await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+                    except:
+                        pass
+
+# ========== JOBS & CALLBACKS ==========
 async def delete_msg_job(context: ContextTypes.DEFAULT_TYPE):
-    try: 
-        await context.bot.delete_message(chat_id=context.job.chat_id, message_id=context.job.data)
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "can't be deleted" in error_msg or "not enough rights" in error_msg:
-            try: await context.bot.send_message(context.job.chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-            except: pass
+    """Message ID ko bulk delete queue mein add karega"""
+    chat_id = context.job.chat_id
+    message_id = context.job.data
+    if chat_id and message_id:
+        BULK_DELETE_QUEUE[chat_id].append(message_id)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1111,7 +1130,7 @@ async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await is_user_admin(update, context): 
         msg = await update.message.reply_text("❌ You have not permission.")
         # Make sure you have delete_after_delay defined, or remove this task
-        # asyncio.create_task(delete_after_delay(msg, 10)) 
+        
         return
         
     chat_id = update.effective_chat.id
@@ -1606,11 +1625,10 @@ async def gban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db.add_gban(target_id, reason)
     
-    # Text ko safe banane ke liye html.escape ka use kiya
     safe_reason = html.escape(reason)
     safe_name = html.escape(target_name or str(target_id))
     
-    # 👇 User ko turant DM bhejna (HTML mode ke sath) 👇
+    # User ko DM
     try:
         await context.bot.send_message(
             chat_id=target_id,
@@ -1618,19 +1636,37 @@ async def gban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
     except Exception as e:
-        print(f"GBAN DM Error: {e}") # Agar DM fail hua toh Render logs me dikh jayega
-    # 👆 DM END 👆
+        print(f"GBAN DM Error: {e}")
     
-    # Current group se turant ban karne ki koshish
+    # ----- LOOP OVER ALL GROUPS TO BAN THE USER -----
+    all_groups = db.get_groups()   # returns list of (chat_id, title)
+    banned_count = 0
+    failed_count = 0
+    
+    for chat_id, _ in all_groups:
+        try:
+            await context.bot.ban_chat_member(chat_id, target_id)
+            banned_count += 1
+            await asyncio.sleep(0.05)  # rate limit protection
+        except Exception as e:
+            failed_count += 1
+            # Ignore errors (bot not admin, user already banned, etc.)
+    
+    # Current group mein bhi ban attempt (already included in loop, but keeping for consistency)
     if update.effective_chat.type in ['group', 'supergroup']:
         try:
             await context.bot.ban_chat_member(update.effective_chat.id, target_id)
         except:
             pass
-
-    # Group me confirmation message (Ye bhi HTML mode me)
+    
+    # Confirmation message with counts
     await update.message.reply_text(
-        f"🌍 <b>GBANNED SUCCESSFULLY!</b>\n\n👤 <b>User:</b> {safe_name} (<code>{target_id}</code>)\n📝 <b>Reason:</b> {safe_reason}\n\n<i>This user will now be banned from all groups where I am admin.</i>", 
+        f"🌍 <b>GBANNED SUCCESSFULLY!</b>\n\n"
+        f"👤 <b>User:</b> {safe_name} (<code>{target_id}</code>)\n"
+        f"📝 <b>Reason:</b> {safe_reason}\n"
+        f"🔨 <b>Banned in:</b> {banned_count} groups\n"
+        f"⚠️ <b>Failed in:</b> {failed_count} groups\n\n"
+        f"<i>This user will also be banned automatically from any future groups they join.</i>", 
         parse_mode='HTML'
     )
     
@@ -2507,7 +2543,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         pass
             
             count = db.add_warning(user.id)
-            warn_limit, action = config[1], config[2]
+        
             safe_name = html.escape(user.full_name)
             
             # ... (iske niche ka baaki pura code bilkul waisa hi rahega)
@@ -2750,6 +2786,9 @@ def main():
 
     app_bot.add_handler(ChatMemberHandler(auto_reset_on_unmute, ChatMemberHandler.CHAT_MEMBER))
     app_bot.add_handler(ChatMemberHandler(track_bot_status, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # Bulk delete flusher – har 2 seconds mein queue process karega
+    app_bot.job_queue.run_repeating(flush_bulk_deletes, interval=2, first=2)
     
     print("Bot is running...")
     app_bot.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
