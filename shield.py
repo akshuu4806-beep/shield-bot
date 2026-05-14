@@ -2479,26 +2479,40 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_exempt:
         violation, reason = False, ""
         
-        # BIO SHIELD
+        # ========== IMPROVED BIO SHIELD ==========
+bio_has_link = False
+bio_fetch_failed = False
+
+try:
+    u_chat = await context.bot.get_chat(user.id)
+    bio = u_chat.bio or ""
+    bio_has_link = has_link(bio)
+except Exception as bio_error:
+    # Agar bio fetch nahi ho paaya, to maan lo clean hai (false positive se bachao)
+    bio_fetch_failed = True
+    logger.warning(f"Bio fetch failed for {user.id}: {bio_error}")
+
+# Only treat as violation if fetch succeeded AND bio has link
+if not bio_fetch_failed and bio_has_link:
+    violation = True
+    reason = "Link in Bio"
+    db.update_stat('bio_caught')
+    bio_violators.add(user.id)
+
+elif not bio_fetch_failed and not bio_has_link:
+    # Bio is clean – reset warnings if user was previously a violator
+    if user.id in bio_violators:
+        db.reset_warnings(user.id)
+        bio_violators.remove(user.id)
+        # Optional: DM the user that warnings are cleared
         try:
-            u_chat = await context.bot.get_chat(user.id)
-            bio = u_chat.bio or ""
-
-            if has_link(bio):
-                violation, reason = True, "Link in Bio"
-                db.update_stat('bio_caught')
-
-                # 👇 mark user as bio violator
-                bio_violators.add(user.id)
-
-            else:
-                # 👇 agar pehle bio violator tha aur ab clean hai → reset
-                if user.id in bio_violators:
-                    db.reset_warnings(user.id)
-                    bio_violators.remove(user.id)
-
+            await context.bot.send_message(
+                user.id,
+                "✅ Your bio is now clean. All your warnings have been reset."
+            )
         except:
             pass
+            
         
         
         # ANTI-LINK
@@ -2581,15 +2595,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🚫 <b>Reason:</b> {reason}\n"
                     f"⚠️ <b>Warnings:</b> {count}/{warn_limit}" 
                 )   
-                notice_text = (
-                    "\n\n🛑 NOTICE: PLEASE REMOVE ANY LINKS FROM YOUR BIO IMMEDIATELY.\n\n"
-                    "📌 REPEATED VIOLATIONS WILL LEAD TO MUTE/BAN."
-                )
-                is_app = db.is_allowed(user.id)
-                app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
-                keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
-                            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
-                await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+            if reason == "Link in Bio":
+    notice_text = (
+        "\n\n⚠️ **Link detected in your bio.**\n"
+        "Please remove all links from your bio immediately.\n"
+        "Repeated violations will lead to mute/ban."
+    )
+elif reason == "Link in Message":
+    notice_text = (
+        "\n\n⚠️ **Links are not allowed in messages.**\n"
+        "Repeated violations will lead to mute/ban."
+    )
+else:
+    notice_text = ""
+                
+is_app = db.is_allowed(user.id)
+app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
+keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
+            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
                 
 # ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
