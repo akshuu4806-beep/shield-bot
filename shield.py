@@ -2480,59 +2480,52 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         violation, reason = False, ""
         
         # ========== IMPROVED BIO SHIELD ==========
-bio_has_link = False
-bio_fetch_failed = False
+        bio_has_link = False
+        bio_fetch_failed = False
 
-try:
-    u_chat = await context.bot.get_chat(user.id)
-    bio = u_chat.bio or ""
-    bio_has_link = has_link(bio)
-except Exception as bio_error:
-    # Agar bio fetch nahi ho paaya, to maan lo clean hai (false positive se bachao)
-    bio_fetch_failed = True
-    logger.warning(f"Bio fetch failed for {user.id}: {bio_error}")
-
-# Only treat as violation if fetch succeeded AND bio has link
-if not bio_fetch_failed and bio_has_link:
-    violation = True
-    reason = "Link in Bio"
-    db.update_stat('bio_caught')
-    bio_violators.add(user.id)
-
-elif not bio_fetch_failed and not bio_has_link:
-    # Bio is clean – reset warnings if user was previously a violator
-    if user.id in bio_violators:
-        db.reset_warnings(user.id)
-        bio_violators.remove(user.id)
-        # Optional: DM the user that warnings are cleared
         try:
-            await context.bot.send_message(
-                user.id,
-                "✅ Your bio is now clean. All your warnings have been reset."
-            )
-        except:
-            pass
-            
-        
-        
-        # ANTI-LINK
-        if not violation and has_link(msg_text): 
-            violation, reason = True, "Link in Message"
+            u_chat = await context.bot.get_chat(user.id)
+            bio = u_chat.bio or ""
+            bio_has_link = has_link(bio)
+        except Exception as bio_error:
+            bio_fetch_failed = True
+            logger.warning(f"Bio fetch failed for {user.id}: {bio_error}")
 
-        # MALICIOUS FILE BLOCKER (Anti-Virus)
+        # Bio violation check
+        if not bio_fetch_failed and bio_has_link:
+            violation = True
+            reason = "Link in Bio"
+            db.update_stat('bio_caught')
+            bio_violators.add(user.id)
+        elif not bio_fetch_failed and not bio_has_link:
+            if user.id in bio_violators:
+                db.reset_warnings(user.id)
+                bio_violators.remove(user.id)
+                try:
+                    await context.bot.send_message(user.id, "✅ Your bio is now clean. All warnings reset.")
+                except:
+                    pass
+
+        # ANTI-LINK (Bio violation nahi hai aur message mein link hai)
+        if not violation and has_link(msg_text):
+            violation = True
+            reason = "Link in Message"
+
+        # MALICIOUS FILE BLOCKER
         if not violation and update.message.document:
             file_name = update.message.document.file_name
             if file_name:
                 ext = file_name.lower().split('.')[-1]
                 if ext in ['apk', 'exe', 'bat', 'scr', 'vbs', 'js', 'zip', 'bin']:
-                    violation, reason = True, f"Malicious File (.{ext})"
+                    violation = True
+                    reason = f"Malicious File (.{ext})"
 
-# ===================================================================
-        # PUNISHMENT LOGIC (PERFECTLY SPLIT CASES & ERROR FIXES)
+        # ===================================================================
+        # PUNISHMENT LOGIC
         # ===================================================================
         if violation:
             db.update_stat('warnings_issued')
-            try: 
+            try:
                 await update.message.delete()
             except Exception as e:
                 error_msg = str(e).lower()
@@ -2541,14 +2534,11 @@ elif not bio_fetch_failed and not bio_has_link:
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-            
-            count = db.add_warning(user.id)
-        
-            safe_name = html.escape(user.full_name)
-            
-            # ... (iske niche ka baaki pura code bilkul waisa hi rahega)
 
-            # CASE 1: LIMIT CROSS HO CHUKI HAI (User already Muted/Banned hai aur Spam kar raha hai)
+            count = db.add_warning(user.id)
+            safe_name = html.escape(user.full_name)
+
+            # CASE 1: Already over limit (should not happen normally)
             if count > warn_limit:
                 if action == "mute":
                     msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
@@ -2558,63 +2548,58 @@ elif not bio_fetch_failed and not bio_has_link:
                     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
                 return
 
-            # CASE 2: EXACT LIMIT PAR PAHUH GAYA (Pehli baar Mute/Ban karna hai)
+            # CASE 2: Exactly reached limit → Mute/Ban
             elif count == warn_limit:
                 if action == "mute":
                     try:
-                        # Attempt to mute
                         await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
                         txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                         kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        # Agar mute FAILED ho gaya (No permission)
                         await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
-                        # Warning count ko 1 kam karna (NAYA FUNCTION USE KIYA HAI)
                         db.decrease_warning(user.id)
-                
                 elif action == "ban":
                     try:
-                        # Attempt to ban
                         await context.bot.ban_chat_member(chat_id, user.id)
                         txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                         kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        # Agar ban FAILED ho gaya
                         await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
-                        # Warning count ko 1 kam karna (NAYA FUNCTION USE KIYA HAI)
                         db.decrease_warning(user.id)
                 return
 
-            # CASE 3: NORMAL WARNINGS (Limit se kam hai)
+            # CASE 3: Normal warning (below limit)
             else:
                 base_info_text = (
                     f"👤 <b>User:</b> {user.mention_html()}\n"
                     f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                     f"🚫 <b>Reason:</b> {reason}\n"
-                    f"⚠️ <b>Warnings:</b> {count}/{warn_limit}" 
-                )   
-            if reason == "Link in Bio":
-    notice_text = (
-        "\n\n⚠️ **Link detected in your bio.**\n"
-        "Please remove all links from your bio immediately.\n"
-        "Repeated violations will lead to mute/ban."
-    )
-elif reason == "Link in Message":
-    notice_text = (
-        "\n\n⚠️ **Links are not allowed in messages.**\n"
-        "Repeated violations will lead to mute/ban."
-    )
-else:
-    notice_text = ""
-                
-is_app = db.is_allowed(user.id)
-app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
-keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
-            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
-await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
-                
+                    f"⚠️ <b>Warnings:</b> {count}/{warn_limit}"
+                )
+
+                # Reason-specific notice
+                if reason == "Link in Bio":
+                    notice_text = (
+                        "\n\n⚠️ **Link detected in your bio.**\n"
+                        "Please remove all links from your bio immediately.\n"
+                        "Repeated violations will lead to mute/ban."
+                    )
+                elif reason == "Link in Message":
+                    notice_text = (
+                        "\n\n⚠️ **Links are not allowed in messages.**\n"
+                        "Repeated violations will lead to mute/ban."
+                    )
+                else:
+                    notice_text = ""
+
+                is_app = db.is_allowed(user.id)
+                app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
+                keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
+                            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+        
 # ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members: return
