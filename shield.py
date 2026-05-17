@@ -2474,58 +2474,38 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===================================================================
     # VIOLATION CHECKS (Anti-Link, Bio Shield & Anti-Virus)
     # ===================================================================
-    
     # Only proceed if User is NOT exempt
     if not is_exempt:
         violation, reason = False, ""
         
-        # ========== IMPROVED BIO SHIELD ==========
-        bio_has_link = False
-        bio_fetch_failed = False
-
+        # BIO SHIELD
         try:
             u_chat = await context.bot.get_chat(user.id)
-            bio = u_chat.bio or ""
-            bio_has_link = has_link(bio)
-        except Exception as bio_error:
-            bio_fetch_failed = True
-            logger.warning(f"Bio fetch failed for {user.id}: {bio_error}")
+            if u_chat.bio and has_link(u_chat.bio): 
+                violation, reason = True, "Link in Bio"
+                db.update_stat('bio_caught')
+        except: pass
+        
+        # ANTI-LINK
+        if not violation and has_link(msg_text): 
+            violation, reason = True, "Link in Message"
 
-        # Bio violation check
-        if not bio_fetch_failed and bio_has_link:
-            violation = True
-            reason = "Link in Bio"
-            db.update_stat('bio_caught')
-            bio_violators.add(user.id)
-        elif not bio_fetch_failed and not bio_has_link:
-            if user.id in bio_violators:
-                db.reset_warnings(user.id)
-                bio_violators.remove(user.id)
-                try:
-                    await context.bot.send_message(user.id, "✅ Your bio is now clean. All warnings reset.")
-                except:
-                    pass
-
-        # ANTI-LINK (Bio violation nahi hai aur message mein link hai)
-        if not violation and has_link(msg_text):
-            violation = True
-            reason = "Link in Message"
-
-        # MALICIOUS FILE BLOCKER
+        # MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
             file_name = update.message.document.file_name
             if file_name:
                 ext = file_name.lower().split('.')[-1]
                 if ext in ['apk', 'exe', 'bat', 'scr', 'vbs', 'js', 'zip', 'bin']:
-                    violation = True
-                    reason = f"Malicious File (.{ext})"
+                    violation, reason = True, f"Malicious File (.{ext})"
 
+
+    
         # ===================================================================
         # PUNISHMENT LOGIC
         # ===================================================================
         if violation:
             db.update_stat('warnings_issued')
-            try:
+            try: 
                 await update.message.delete()
             except Exception as e:
                 error_msg = str(e).lower()
@@ -2534,9 +2514,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-
+            
             count = db.add_warning(user.id)
+            warn_limit, action = config[1], config[2]
             safe_name = html.escape(user.full_name)
+
 
             # CASE 1: Already over limit (should not happen normally)
             if count > warn_limit:
