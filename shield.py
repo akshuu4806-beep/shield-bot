@@ -479,6 +479,10 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
     
 async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -511,6 +515,10 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ **{safe_name}** (`{target_id}`) has been whitelisted.", parse_mode='Markdown')
 
 async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -1113,6 +1121,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
     
 async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     if not await is_user_admin(update, context): 
         msg = await update.message.reply_text("❌ You have not permission.")
         # Make sure you have delete_after_delay defined, or remove this task
@@ -1149,6 +1162,11 @@ async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     # Admin Permission Check
     if not await is_user_admin(update, context): 
         await update.message.reply_text(
@@ -1208,6 +1226,11 @@ async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_msg = await update.message.reply_text(status_text, parse_mode='HTML')
     
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     chat_id = update.effective_chat.id
 
     # Admin verification
@@ -1235,6 +1258,11 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def allowlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
         return
@@ -1762,6 +1790,11 @@ async def nsfw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔞 <b>NSFW Filter</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
 async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     user_id = update.effective_user.id
     args = context.args
     
@@ -1827,6 +1860,11 @@ async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🚫 <b>Anti-Channel</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
 async def antibot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     user_id = update.effective_user.id
     args = context.args
 
@@ -2031,6 +2069,11 @@ async def greact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==========================================
 
 async def blockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     chat_id = update.effective_chat.id
     
     # 👇 Admin ki command ko 5 second baad delete karne ka timer
@@ -2072,6 +2115,11 @@ async def blockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def blocksticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     chat_id = update.effective_chat.id
     
     # 👇 Admin ki command ko 5 second baad delete karne ka timer
@@ -2099,6 +2147,11 @@ async def blocksticker_command(update: Update, context: ContextTypes.DEFAULT_TYP
     context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
 
 async def unblockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     chat_id = update.effective_chat.id
     
     if update.message:
@@ -2125,6 +2178,11 @@ async def unblockword_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
     
 async def unblocksticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     chat_id = update.effective_chat.id
     
     if update.message:
@@ -2151,6 +2209,11 @@ async def unblocksticker_command(update: Update, context: ContextTypes.DEFAULT_T
     context.job_queue.run_once(delete_msg_job, 5, chat_id=chat_id, data=msg.message_id)
 
 async def listlocal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+    
     chat_id = update.effective_chat.id
     
     if update.message:
