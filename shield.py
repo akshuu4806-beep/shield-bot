@@ -157,6 +157,14 @@ class PersistentDB:
     def set_nsfw(self, chat_id, enabled):
         self.group_config.update_one({"_id": chat_id}, {"$set": {"nsfw_enabled": 1 if enabled else 0}}, upsert=True)
 
+    # Global NSFW flag
+    def set_global_nsfw(self, enabled):
+        self.global_stats.update_one({"_id": 1}, {"$set": {"global_nsfw": 1 if enabled else 0}}, upsert=True)
+
+    def get_global_nsfw(self):
+        stats = self.global_stats.find_one({"_id": 1})
+        return stats.get("global_nsfw", 1)  # default ON
+    
     def add_user(self, user_or_id):
         user_id = user_or_id.id if hasattr(user_or_id, "id") else int(user_or_id)
 
@@ -1383,24 +1391,45 @@ async def gmsg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Failed.\nError: <code>{e}</code>", parse_mode='HTML')
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcasts a message to all active groups/DMs with Pin/Unpin support."""
     if update.effective_user.id not in ADMIN_IDS and not db.is_sudo(update.effective_user.id):
         return
         
     reply_msg = update.message.reply_to_message
-    args_text = " ".join(context.args)
+    args = context.args
     
+    # Check if first arg is a serial number
+    target_chat_id = None
+    start_idx = 0
+    if args and args[0].isdigit():
+        s_no = int(args[0])
+        groups = db.get_groups()
+        if 1 <= s_no <= len(groups):
+            target_chat_id = groups[s_no - 1][0]
+            start_idx = 1
+        else:
+            await update.message.reply_text("❌ Invalid Serial Number.")
+            return
+    
+    # Extract flags and message from remaining args
+    remaining = args[start_idx:]
+    args_text = " ".join(remaining)
     should_pin = "-pin" in args_text
     should_unpin = "-unpin" in args_text
     clean_text = args_text.replace("-pin", "").replace("-unpin", "").strip()
     
     if not reply_msg and not clean_text and not should_unpin:
-        await update.message.reply_text("❗ <b>Usage:</b> Reply or type <code>/broadcast [-pin/-unpin] <text></code>", parse_mode='HTML')
+        await update.message.reply_text(
+            "❗ <b>Usage:</b>\n"
+            "• <code>/broadcast [-pin/-unpin] &lt;text&gt;</code>  (all groups)\n"
+            "• <code>/broadcast &lt;sno&gt; [-pin/-unpin] &lt;text&gt;</code>  (specific group)\n"
+            "• Reply to a message with <code>/broadcast [sno] [-pin/-unpin]</code>",
+            parse_mode='HTML'
+        )
         return
 
     status_msg = await update.message.reply_text("⏳ <b>Starting Broadcast...</b>\nThis may take a moment.", parse_mode='HTML')
     
-    targets = db.get_all_targets()
+    targets = [target_chat_id] if target_chat_id else db.get_all_targets()
     success, failed, pinned = 0, 0, 0
     
     for target_id in targets:
@@ -1735,60 +1764,109 @@ async def gbanlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def nsfw_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # 🔒 STRICT LOCK: Sirf Owner aur Sudo Admins ke liye
-    if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
-        await update.message.reply_text("❌ Only the Bot Owner or Sudo Admins can use this command.")
-        return
-
+    chat = update.effective_chat
     args = context.args
+
+    # --- CASE: No arguments → Show status ---
     if not args:
-        await update.message.reply_text("❗ <b>Usage:</b>\nIn Group: <code>/nsfw on/off</code>\nRemote: <code>/nsfw <serial_no> on/off</code>\nGlobal: <code>/nsfw all on/off</code>", parse_mode='HTML')
-        return 
-    
-    # CASE 1: Global Control (e.g., /nsfw all off)
+        if chat.type in ['group', 'supergroup']:
+            # Only admins/owner/sudo can view status
+            is_admin = await is_user_admin(update, context) or db.is_sudo(user_id) or user_id in ADMIN_IDS
+            if not is_admin:
+                await update.message.reply_text("❌ You are not an admin.")
+                return
+
+            local_enabled = db.get_config(chat.id)[5]  # index 5 = nsfw_enabled
+            global_enabled = db.get_global_nsfw()
+            local_status = "🟢 ON" if local_enabled else "🔴 OFF"
+            global_status = "🟢 ON" if global_enabled else "🔴 OFF"
+
+            text = (
+                f"🔞 **NSFW Filter Status**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📌 **This Group:** {local_status}\n"
+                f"🌍 **Global Setting:** {global_status}\n\n"
+                f"_Admins can toggle local with_ `/nsfw on/off`"
+            )
+            await update.message.reply_text(text, parse_mode='Markdown')
+            return
+
+        else:  # private chat
+            global_enabled = db.get_global_nsfw()
+            global_status = "🟢 ON" if global_enabled else "🔴 OFF"
+            text = f"🌍 **Global NSFW Setting:** {global_status}"
+            await update.message.reply_text(text, parse_mode='Markdown')
+            return
+
+    # --- CASE: Global control (only Owner/Sudo) ---
     if args[0].lower() == "all" and len(args) == 2:
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ Only Owner and Sudo Admins can use global control.")
+            return
+
         state_str = args[1].lower()
         if state_str not in ['on', 'off']:
-            await update.message.reply_text("❗ <b>Usage:</b> <code>/nsfw all on</code> or <code>off</code>", parse_mode='HTML')
+            await update.message.reply_text("❗ **Usage:** `/nsfw all on` or `off`", parse_mode='Markdown')
             return
-            
+
         state = (state_str == "on")
+        db.set_global_nsfw(state)  # store global flag
         groups = db.get_groups()
         for chat_id, _ in groups:
             db.set_nsfw(chat_id, state)
-            
-        await update.message.reply_text(f"✅ <b>Global Update:</b> NSFW Filter is now <b>{'ENABLED' if state else 'DISABLED'}</b> in ALL {len(groups)} groups.", parse_mode='HTML')
+
+        await update.message.reply_text(
+            f"✅ **Global NSFW Update:** Set to **{'ENABLED' if state else 'DISABLED'}** for ALL {len(groups)} groups.",
+            parse_mode='Markdown'
+        )
         return
 
-    # CASE 2: Remote Control using Serial Number (e.g., /nsfw 1 off)
+    # --- CASE: Remote control via serial number (Owner/Sudo only) ---
     if len(args) == 2 and args[0].isdigit():
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ Only Owner and Sudo Admins can use remote control.")
+            return
+
         s_no = int(args[0])
         state_str = args[1].lower()
-        
         groups = db.get_groups()
         if s_no < 1 or s_no > len(groups):
             await update.message.reply_text("❌ Invalid Serial Number.")
             return
-            
+
         target_chat_id = groups[s_no - 1][0]
         target_title = groups[s_no - 1][1]
         state = (state_str == "on")
-        
         db.set_nsfw(target_chat_id, state)
-        await update.message.reply_text(f"✅ <b>NSFW Filter</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> for group:\n📍 <b>{html.escape(target_title)}</b>", parse_mode='HTML')
+
+        await update.message.reply_text(
+            f"✅ **NSFW Filter** is now **{'ENABLED' if state else 'DISABLED'}** for group:\n📍 **{html.escape(target_title)}**",
+            parse_mode='HTML'
+        )
         return
 
-    # CASE 3: Normal Control in the current group (e.g., /nsfw off)
+    # --- CASE: Local toggle (must be in group, admin only) ---
+    if chat.type not in ['group', 'supergroup']:
+        await update.message.reply_text("❌ This command works in groups only.")
+        return
+
+    if not await is_user_admin(update, context) and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ You are not an admin in this group.")
+        return
+
     state_str = args[0].lower()
     if state_str not in ['on', 'off']:
-        await update.message.reply_text("❗ <b>Usage:</b> <code>/nsfw on</code> or <code>off</code>", parse_mode='HTML')
+        await update.message.reply_text("❗ **Usage:** `/nsfw on` or `/nsfw off`", parse_mode='Markdown')
         return
-        
-    state = (state_str == "on")
-    db.set_nsfw(update.effective_chat.id, state)
-    await update.message.reply_text(f"🔞 <b>NSFW Filter</b> is now <b>{'ENABLED' if state else 'DISABLED'}</b> in this group.", parse_mode='HTML')
 
+    state = (state_str == "on")
+    db.set_nsfw(chat.id, state)
+
+    await update.message.reply_text(
+        f"🔞 **NSFW Filter** is now **{'ENABLED' if state else 'DISABLED'}** in this group.",
+        parse_mode='Markdown'
+    )
+    
 async def antichannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ GROUP-ONLY CHECK
     if update.effective_chat.type == 'private':
