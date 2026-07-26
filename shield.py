@@ -2637,7 +2637,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg_text and has_link(msg_text):
             violation, reason = True, "Link in Message"
 
-        # 2. BIO CHECK (Link + Contact)
+        # 2. BIO CHECK (Link)
         if not violation:
             try:
                 u_chat = await context.bot.get_chat(user.id)
@@ -2646,23 +2646,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_bio = None
 
             if user_bio:
-                # Check for link in bio
                 if has_link(user_bio):
                     violation, reason = True, "Link in Bio"
                     db.update_stat('bio_caught')
-                    # Mark the user as having a bio violation if not already flagged
                     if not db.get_bio_violation(user.id):
                         db.set_bio_violation(user.id, True)
-
-        # (Optional) Check for phone/email if you have that feature enabled
-        # elif has_contact_info(user_bio):
-        #     violation, reason = True, "Phone/Email in Bio"
-        #     db.update_stat('bio_caught')
-        #     if not db.get_bio_violation(user.id):
-        #         db.set_bio_violation(user.id, True)
-
+                else:
+                    # Bio exists but has no link – clear the violation flag
+                    if db.get_bio_violation(user.id):
+                        db.set_bio_violation(user.id, False)
             else:
-        # Bio is empty or None – clear the violation flag so warnings stop
+                # Bio is empty – clear the violation flag
                 if db.get_bio_violation(user.id):
                     db.set_bio_violation(user.id, False)
 
