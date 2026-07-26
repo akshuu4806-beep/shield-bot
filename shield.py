@@ -2619,17 +2619,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_exempt:
         violation, reason = False, ""
         
-        # BIO SHIELD
+         # BIO SHIELD
         try:
             u_chat = await context.bot.get_chat(user.id)
-            if u_chat.bio and has_link(u_chat.bio): 
-                violation, reason = True, "Link in Bio"
-                db.update_stat('bio_caught')
+            if u_chat.bio:
+                print(f"🔍 USER {user.id} BIO: {repr(u_chat.bio)}")
+                if has_link(u_chat.bio):
+                    print(f"🚨 BIO HAS LINK!")
+                    violation, reason = True, "Link in Bio"
+                    db.update_stat('bio_caught')
         except: pass
         
         # ANTI-LINK
-        if not violation and has_link(msg_text): 
-            violation, reason = True, "Link in Message"
+        if msg_text:
+            print(f"🔍 USER {user.id} MSG: {repr(msg_text)}")
+            if not violation and has_link(msg_text):
+                print(f"🚨 MSG HAS LINK!")
+                violation, reason = True, "Link in Message"
 
         # MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
