@@ -2665,7 +2665,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Bio is empty or None – clear the violation flag so warnings stop
                 if db.get_bio_violation(user.id):
                     db.set_bio_violation(user.id, False)
-                    db.reset_warnings(user.id)   # ← reset warnings as well
 
         # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
