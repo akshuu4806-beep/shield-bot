@@ -33,6 +33,18 @@ from telegram.ext import (
     ApplicationHandlerStop   # ADD THIS
 )
 
+# Email और Phone Number डिटेक्ट करने वाला Regex
+CONTACT_REGEX = re.compile(
+    r'(?:(?:\+?91[\-\s]?)?[6-9]\d{9})|'          # Indian Mobile (10 digit)
+    r'(?:\+?[1-9]\d{1,3}[-.\s]?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4})|' # International
+    r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})' # Email
+)
+
+def has_contact_info(text):
+    if not text:
+        return False
+    return bool(CONTACT_REGEX.search(text))
+
 import time
 from collections import defaultdict
 
@@ -137,8 +149,11 @@ class PersistentDB:
         s = self.group_config.find_one({"_id": chat_id})
         return (s.get("delay_minutes", 1), s.get("warn_limit", 3), s.get("action", "mute"), 
                 s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1),
-                s.get("anti_bot", 1)) if s else (1, 3, "mute", 0, 1, 1, 1)
+                s.get("anti_bot", 1), s.get("anti_contact", 1)) if s else (1, 3, "mute", 0, 1, 1, 1)
 
+    def set_anti_contact(self, chat_id, enabled):
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"anti_contact": 1 if enabled else 0}}, upsert=True)
+    
     def set_anti_bot(self, chat_id, enabled):
         self.group_config.update_one({"_id": chat_id}, {"$set": {"anti_bot": 1 if enabled else 0}}, upsert=True)
     
@@ -558,6 +573,98 @@ async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ **{safe_name}** (`{target_id}`) removed from whitelist.", parse_mode='Markdown')
     else:
         await update.message.reply_text(f"**{safe_name}** (`{target_id}`) was not in the whitelist.", parse_mode='Markdown')
+
+async def anticontact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ GROUP-ONLY CHECK
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("❌ This command only works in groups.")
+        return
+
+    user_id = update.effective_user.id
+    args = context.args
+    chat = update.effective_chat
+
+    # CASE: No arguments → Show current status
+    if not args:
+        is_admin = await is_user_admin(update, context) or db.is_sudo(user_id) or user_id in ADMIN_IDS
+        if not is_admin:
+            await update.message.reply_text("❌ You are not an admin.")
+            return
+
+        config = db.get_config(chat.id)
+        anti_contact_enabled = config[7]  # 8th element
+        status = "🟢 ON" if anti_contact_enabled else "🔴 OFF"
+        await update.message.reply_text(
+            f"📱 **Anti-Phone & Email Filter**\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📌 **This Group:** {status}\n\n"
+            f"_Admins can toggle with_ `/anticontact on/off`",
+            parse_mode='Markdown'
+        )
+        return
+
+    # CASE: Global Control (e.g., /anticontact all off) → Owner/Sudo only
+    if args[0].lower() == "all" and len(args) == 2:
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ Only Owner and Sudo Admins can use global control.")
+            return
+
+        state_str = args[1].lower()
+        if state_str not in ['on', 'off']:
+            await update.message.reply_text("❗ **Usage:** `/anticontact all on` or `off`", parse_mode='Markdown')
+            return
+
+        state = (state_str == "on")
+        groups = db.get_groups()
+        for chat_id, _ in groups:
+            db.set_anti_contact(chat_id, state)
+
+        await update.message.reply_text(
+            f"✅ **Global Update:** Anti-Contact is now **{'ENABLED' if state else 'DISABLED'}** in ALL {len(groups)} groups.",
+            parse_mode='Markdown'
+        )
+        return
+
+    # CASE: Remote Control using Serial Number (e.g., /anticontact 1 off) → Owner/Sudo only
+    if len(args) == 2 and args[0].isdigit():
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await update.message.reply_text("❌ Only Owner and Sudo Admins can use remote control.")
+            return
+
+        s_no = int(args[0])
+        state_str = args[1].lower()
+        groups = db.get_groups()
+        if s_no < 1 or s_no > len(groups):
+            await update.message.reply_text("❌ Invalid Serial Number.")
+            return
+
+        target_chat_id = groups[s_no - 1][0]
+        target_title = groups[s_no - 1][1]
+        state = (state_str == "on")
+        db.set_anti_contact(target_chat_id, state)
+
+        await update.message.reply_text(
+            f"✅ **Anti-Contact** is now **{'ENABLED' if state else 'DISABLED'}** for group:\n📍 **{html.escape(target_title)}**",
+            parse_mode='HTML'
+        )
+        return
+
+    # CASE: Normal Toggle in current group (e.g., /anticontact off)
+    if not await is_user_admin(update, context) and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ You do not have permission to use this command here.")
+        return
+
+    state_str = args[0].lower()
+    if state_str not in ['on', 'off']:
+        await update.message.reply_text("❗ **Usage:** `/anticontact on` or `/anticontact off`", parse_mode='Markdown')
+        return
+
+    state = (state_str == "on")
+    db.set_anti_contact(update.effective_chat.id, state)
+    await update.message.reply_text(
+        f"📱 **Anti-Phone & Email Filter** is now **{'ENABLED' if state else 'DISABLED'}** in this group.",
+        parse_mode='Markdown'
+    )
 
 async def flush_bulk_deletes(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled job: har 2 seconds mein queue ko process karega"""
@@ -2464,7 +2571,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db.add_group(chat_id, update.effective_chat.title)
     # 'mute_hrs' ki jagah ab 'action' fetch kar rahe hain
-    delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled = db.get_config(chat_id)
+    delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled, anti_contact_enabled = db.get_config(chat_id)
     
     # Media Logic (Applies to everyone)
     is_media = any([update.message.photo, update.message.video, update.message.document, 
@@ -2613,35 +2720,43 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(temp_file_path)
             
     # ===================================================================
-    # VIOLATION CHECKS (Anti-Link, Bio Shield & Anti-Virus)
+    # VIOLATION CHECKS (Anti-Link, Bio Shield, Anti-Virus, Anti-Contact)
     # ===================================================================
     # Only proceed if User is NOT exempt
     if not is_exempt:
         violation, reason = False, ""
         
-         # ANTI-LINK + BIO SHIELD (second bot jaisa hi order & logic)
+        # 1. ANTI-LINK (Message)
         if msg_text and has_link(msg_text):
             violation, reason = True, "Link in Message"
-        else:
+
+        # 2. ANTI-CONTACT (Phone/Email in Message)  <-- NAYA CHECK
+        elif not violation and anti_contact_enabled and msg_text and has_contact_info(msg_text):
+            violation, reason = True, "Phone/Email in Message"
+
+        # 3. BIO CHECK (Link + Contact)
+        if not violation:
             try:
                 u_chat = await context.bot.get_chat(user.id)
                 user_bio = u_chat.bio
             except Exception:
                 user_bio = None
-            if user_bio and has_link(user_bio):
-                violation, reason = True, "Link in Bio"
-                db.update_stat('bio_caught')
-                
 
-        # MALICIOUS FILE BLOCKER (Anti-Virus)
+            if user_bio:
+                if has_link(user_bio):
+                    violation, reason = True, "Link in Bio"
+                    db.update_stat('bio_caught')
+                elif anti_contact_enabled and has_contact_info(user_bio):  # <-- NAYA BIO CHECK
+                    violation, reason = True, "Phone/Email in Bio"
+                    db.update_stat('bio_caught')
+
+        # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
             file_name = update.message.document.file_name
             if file_name:
                 ext = file_name.lower().split('.')[-1]
                 if ext in ['apk', 'exe', 'bat', 'scr', 'vbs', 'js', 'zip', 'bin']:
                     violation, reason = True, f"Malicious File (.{ext})"
-
-
     
         # ===================================================================
         # PUNISHMENT LOGIC
@@ -2885,6 +3000,7 @@ def main():
     app_bot.add_handler(CommandHandler("addword", addword_command))
     app_bot.add_handler(CommandHandler("rmword", rmword_command))
     app_bot.add_handler(CommandHandler("wordlist", wordlist_command))
+    app_bot.add_handler(CommandHandler("anticontact", anticontact_command))
 
     # Add these lines inside your main() function
     app_bot.add_handler(CommandHandler("blockword", blockword_command))
