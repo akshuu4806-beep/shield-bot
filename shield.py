@@ -335,6 +335,19 @@ class PersistentDB:
     def get_gbans(self):
         return [(u["_id"], u.get("reason", "No reason")) for u in self.gbans.find()]
 
+    def set_bio_violation(self, user_id: int, value: bool):
+        """Set the bio violation flag for a user."""
+        self.users.update_one(
+            {"_id": user_id},
+            {"$set": {"bio_violation": value}},
+            upsert=True
+        )
+
+    def get_bio_violation(self, user_id: int) -> bool:
+        """Return True if the user currently has a bio link violation flagged."""
+        user = self.users.find_one({"_id": user_id})
+        return user.get("bio_violation", False) if user else False
+                           
 db = PersistentDB()
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -2633,12 +2646,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_bio = None
 
             if user_bio:
+                # Check for link in bio
                 if has_link(user_bio):
                     violation, reason = True, "Link in Bio"
                     db.update_stat('bio_caught')
-                elif anti_contact_enabled and has_contact_info(user_bio):  # <-- NAYA BIO CHECK
-                    violation, reason = True, "Phone/Email in Bio"
-                    db.update_stat('bio_caught')
+                    # Mark the user as having a bio violation if not already flagged
+                    if not db.get_bio_violation(user.id):
+                        db.set_bio_violation(user.id, True)
+
+        # (Optional) Check for phone/email if you have that feature enabled
+        # elif has_contact_info(user_bio):
+        #     violation, reason = True, "Phone/Email in Bio"
+        #     db.update_stat('bio_caught')
+        #     if not db.get_bio_violation(user.id):
+        #         db.set_bio_violation(user.id, True)
+
+            else:
+        # Bio is empty or None – clear the violation flag so warnings stop
+                if db.get_bio_violation(user.id):
+                    db.set_bio_violation(user.id, False)
+                    db.reset_warnings(user.id)   # ← reset warnings as well
 
         # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
