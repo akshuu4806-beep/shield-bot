@@ -619,43 +619,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 1. DELETE MESSAGES (Har koi use kar sakta hai)
     if "delete_msg" in query.data or "delmsg" in query.data:
-        try: 
+        try:
             await query.message.delete()
-        except Exception as e: 
+        except Exception as e:
             error_msg = str(e).lower()
             if "can't be deleted" in error_msg or "not enough rights" in error_msg:
                 await query.answer("⚠️ Please give me delete messages permission.", show_alert=True)
         return
-        
+
     # 2. HELP MENU (Button Click Logic)
     if query.data == "help_main":
         is_private = update.effective_chat.type == 'private'
-
         if is_private:
             help_text = (
-        "🤖 **BOT COMMANDS MENU**\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "👤 **USER COMMANDS**\n"
-        "• `/start` : Check bot status\n"
-        "• `/status` : Check security stats\n"
-        "• `/help` : Show this menu\n\n"
-        "🛡️ **ADMIN SECURITY**\n"
-        "• `/nsfw on/off` : AI Media Filter\n"
-        "• `/antichannel on/off` : Stop channel posts\n"
-        "• `/edit on/off` : Toggle edited messages\n" # <--- ADD THIS LINE        
-        "• `/config` : Set warn limits & actions\n"
-        "• `/delay <min>` : Media auto-delete timer\n\n"
-        "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
-        "• `/blockword` : Block a word locally\n"
-        "• `/unblockword` : Remove local word block\n"
-        "• `/blocksticker` : Block sticker pack locally\n"
-        "• `/unblocksticker` : Unblock pack locally\n"
-        "• `/listlocal` : View local blocked list\n\n"
-        "👥 **USER MANAGEMENT**\n"
-        "• `/allow` : Whitelist a user\n"
-        "• `/unallow` : Remove from whitelist\n"
-        "• `/allowlist` : List whitelist users\n"
-    )
+                "🤖 **BOT COMMANDS MENU**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "👤 **USER COMMANDS**\n"
+                "• `/start` : Check bot status\n"
+                "• `/status` : Check security stats\n"
+                "• `/help` : Show this menu\n\n"
+                "🛡️ **ADMIN SECURITY**\n"
+                "• `/nsfw on/off` : AI Media Filter\n"
+                "• `/antichannel on/off` : Stop channel posts\n"
+                "• `/edit on/off` : Toggle edited messages\n"
+                "• `/config` : Set warn limits & actions\n"
+                "• `/delay <min>` : Media auto-delete timer\n\n"
+                "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
+                "• `/blockword` : Block a word locally\n"
+                "• `/unblockword` : Remove local word block\n"
+                "• `/blocksticker` : Block sticker pack locally\n"
+                "• `/unblocksticker` : Unblock pack locally\n"
+                "• `/listlocal` : View local blocked list\n\n"
+                "👥 **USER MANAGEMENT**\n"
+                "• `/allow` : Whitelist a user\n"
+                "• `/unallow` : Remove from whitelist\n"
+                "• `/allowlist` : List whitelist users\n"
+            )
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
             await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         else:
@@ -668,27 +667,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("⬅️ Back", callback_data="back_to_start"), InlineKeyboardButton("🗑 Close", callback_data="delete_msg")]
             ]
             await query.edit_message_text(group_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        try: await query.answer()
-        except: pass
-        return
-        
-    elif query.data == "back_to_start":
-        await start_command(update, context)
-        try: await query.answer()
-        except: pass
+        try:
+            await query.answer()
+        except:
+            pass
         return
 
-    # 👇 YAHAN PAR ADD KARNA HAI 👇
+    elif query.data == "back_to_start":
+        await start_command(update, context)
+        try:
+            await query.answer()
+        except:
+            pass
+        return
+
     # ==========================================
     # 👑 OWNER & SUDO LOCKED MENU
     # ==========================================
     if query.data == "sudo_menu":
-        # Security Check: Agar user Owner ya Sudo nahi hai, toh popup alert dedo
         if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
             await query.answer("❌ ACCESS DENIED!\n\nThis menu is locked. Only the Bot Owner and Sudo Admins can open it.", show_alert=True)
             return
-            
-        # Agar Owner/Sudo hai, toh commands ki list dikhao
         sudo_text = (
             "👑 **OWNER & SUDO COMMANDS**\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -712,28 +711,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/gbanlist` : List of gban user\n"
         )
         keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
-        
         await query.edit_message_text(sudo_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        try: await query.answer()
-        except: pass
+        try:
+            await query.answer()
+        except:
+            pass
         return
-    # 👆 YAHAN TAK 👆
 
     # Anti-Bot Toggle Button (accessible only to admins)
     if query.data == "antibot_toggle":
-        # Check admin rights
         is_private = update.effective_chat.type == 'private'
         is_admin = is_private or await is_user_admin(update, context)
         if not is_admin:
             await query.answer("❌ You are not an administrator", show_alert=True)
             return
-
         chat_id = update.effective_chat.id
         config = db.get_config(chat_id)
         current = config[6] if len(config) > 6 else 1
         new_state = not current
         db.set_anti_bot(chat_id, new_state)
-
         status = "ENABLED ✅" if new_state else "DISABLED ❌"
         text = (
             f"🤖 **Anti‑Bot Configuration**\n\n"
@@ -749,7 +745,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         await query.answer()
         return
-    
+
     # ==========================================
     # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
     # ==========================================
@@ -761,67 +757,45 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # --- CONFIGURATION LOGIC (INSTANT TICK) ---
+    # यहाँ से पूरा cfg_ ब्लॉक सही इंडेंटेशन के साथ
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
-        config = db.get_config(chat_id)
-        warn_limit, action = config[1], config[2]
-        
-        # 0. Database se current status check kiya
-        edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
-
-        # 1. Action: Warn Limit Change
-        if query.data.startswith("setwarn_"):
-            limit = int(query.data.split("_")[1])
-            if limit == warn_limit:
-                return await query.answer("✅ Already selected!", show_alert=False)
-            db.set_warn_limit(chat_id, limit)
-            warn_limit = limit 
-            await query.answer(f"✅ Warning limit changed to {limit}")
-
-        # 2. Action: Mute/Ban Change
-        elif query.data in ["cfg_mute", "cfg_ban"]:
-            new_action = query.data.split("_")[1]
-            if new_action == action:
-                return await query.answer("✅ Already selected!", show_alert=False)
-            db.set_action(chat_id, new_action)
-            action = new_action 
-            await query.answer(f"✅ Punishment set to {action.upper()}")
-
-        # 3. Action: Edit Guard Toggle
-        elif query.data == "cfg_edit":
-            edit_guard_enabled = not edit_guard_enabled # Toggle
+        # हम सिर्फ cfg_edit, cfg_bio, cfg_main, और bio_* handle करेंगे
+        if query.data == "cfg_edit":
+            edit_guard_enabled = not db.is_edit_guard_enabled(chat_id)
             db.set_edit_guard(chat_id, edit_guard_enabled)
             await query.answer(f"✅ Edit Guard turned {'ON' if edit_guard_enabled else 'OFF'}")
-
-        # 4. Menu: Render Warn Limits Page (Dusre page par jana)
-        elif query.data == "cfg_warn":
-            def get_btn(num):
-                txt = f"✅ {num}" if num == warn_limit else str(num)
-                return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
-            
+            # rebuild main config
+            config = db.get_config(chat_id)
+            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
+            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
+            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
+            bio_status = "ON ✅" if bio_check else "OFF ❌"
+            bio_action_display = bio_action.upper()
+            bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"
+            text = (
+                "⚙️ **Group Configuration**\n\n"
+                f"✏️ **Edit Guard:** {edit_status}\n"
+                f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"
+            )
             keyboard = [
-                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
-                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
-                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+                [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],
+                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
             ]
-            try: 
-                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            except Exception: pass
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             return
 
-        # Inside button_handler, after handling cfg_edit, add:
-
         elif query.data == "cfg_bio":
-            # Show sub-menu for Bio Check
-            chat_id = update.effective_chat.id
+            # Bio Check sub‑menu
             config = db.get_config(chat_id)
             bio_check = config[7]
             bio_action = config[8]
-
             status = "ON ✅" if bio_check else "OFF ❌"
             warn_btn = "✅ Warn" if bio_action == "warn" else "Warn"
             mute_btn = "✅ Mute" if bio_action == "mute" else "Mute"
             ban_btn = "✅ Ban" if bio_action == "ban" else "Ban"
-
             text = (
                 "🧬 **Bio Check Configuration**\n\n"
                 f"🔹 **Status:** {status}\n"
@@ -839,19 +813,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif query.data == "bio_toggle":
-            chat_id = update.effective_chat.id
             config = db.get_config(chat_id)
             current = config[7]
             new_state = not current
             db.set_bio_check(chat_id, new_state)
             await query.answer(f"Bio Check is now {'ON' if new_state else 'OFF'}")
-    # Re‑render the bio sub‑menu (same as cfg_bio)
-    # We can simply call the same logic or re‑trigger cfg_bio
-    # To avoid duplication, we'll redirect to cfg_bio
-    # But we must update the message – we'll simulate a callback to cfg_bio
-    # Simpler: we'll rebuild the menu manually.
-    # Alternatively, we can call the cfg_bio logic again.
-    # Let's do a quick manual rebuild:
+            # rebuild bio sub‑menu
             config = db.get_config(chat_id)
             bio_check = config[7]
             bio_action = config[8]
@@ -875,11 +842,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif query.data in ["bio_warn", "bio_mute", "bio_ban"]:
-            chat_id = update.effective_chat.id
-            action = query.data.split("_")[1]  # 'warn', 'mute', or 'ban'
+            action = query.data.split("_")[1]   # 'warn', 'mute', 'ban'
             db.set_bio_action(chat_id, action)
             await query.answer(f"Bio action set to {action.upper()}")
-    # Re‑render the bio sub‑menu (same as above, we can reuse code)
+            # rebuild bio sub‑menu
             config = db.get_config(chat_id)
             bio_check = config[7]
             bio_action = config[8]
@@ -901,73 +867,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             return
-        
-        # 5. Back to main config menu
+
         elif query.data == "cfg_main":
-            # Re‑render the main config menu
+            # back to main config
             config = db.get_config(chat_id)
-            warn_limit = config[1]
-            action = config[2]
             edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
             edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
             edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+            bio_status = "ON ✅" if bio_check else "OFF ❌"
+            bio_action_display = bio_action.upper()
+            bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"
             text = (
-                f"⚙️ **Group Configuration**\n\n"
-                f"⚠️ **Limit:** {warn_limit}\n"
-                f"🔨 **Action:** {action.upper()}\n"
-                f"✏️ **Edit Guard:** {edit_status}"
+                "⚙️ **Group Configuration**\n\n"
+                f"✏️ **Edit Guard:** {edit_status}\n"
+                f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"
             )
             keyboard = [
-                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
                 [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+                [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],
                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             await query.answer()
             return
-        
-        # ==========================================
-        # 5. UI REFRESHER (Sab kuch yahan update hoga instantly!)
-        # ==========================================
-        mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-        ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-        
-        edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
-        edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-        
-        text = (
-            f"⚙️ **Group Configuration**\n\n"
-            f"⚠️ **Limit:** {warn_limit}\n"
-            f"🔨 **Action:** {action.upper()}\n"
-            f"✏️ **Edit Guard:** {edit_status}"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-            [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-            [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
-            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
-        ]
-        
-        # Pura message naye buttons ke sath recreate kar diya
-        try: 
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception: 
-            pass 
-            
-        return
+
+        # बाकी सारे cfg_* या setwarn_* को हम इग्नोर कर देंगे
+        # (क्योंकि main config में वे बटन नहीं हैं)
+        # इसलिए यहाँ कुछ न करें
 
     # --- OTHER ADMIN BUTTONS (allow, Unban, Unmute) ---
-    try: await query.answer() 
-    except: pass
-    
+    try:
+        await query.answer()
+    except:
+        pass
+
     if "_" in query.data:
         parts = query.data.split("_")
         action = parts[0]
-        
+
         if len(parts) > 1 and parts[-1].lstrip('-').isdigit():
             target_id = int(parts[-1])
 
@@ -989,30 +928,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif action in ["unwarn", "cancle warning"]:
                 db.reset_warnings(target_id)
                 await context.bot.send_message(chat_id, f"🧹 **Warnings Cleared:** User `{target_id}` is now warning-free.", parse_mode='Markdown')
-            
+
             elif action == "unban":
-                # 1. First, try to unban the user
                 try:
                     await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
                     db.reset_warnings(target_id)
                 except Exception as e:
-                    # If the bot lacks permissions or the unban fails, send the error and stop
                     await context.bot.send_message(chat_id, "❌ Failed to unban. Make sure I am an admin.")
                     return
-
-                # 2. If the unban is successful, update the button message
                 try:
                     await query.edit_message_text(f"🔓 User `{target_id}` has been Unbanned. Warnings restarted!", parse_mode='Markdown')
                 except Exception:
-                    # Ignore minor errors like "Message is not modified" from double clicks
                     pass
-                    
+
             elif action == "unmute":
-                # 1. Pehle sirf user ko unmute karne ka try karenge
                 try:
                     await context.bot.restrict_chat_member(
-                        chat_id=chat_id, 
-                        user_id=target_id, 
+                        chat_id=chat_id,
+                        user_id=target_id,
                         permissions=ChatPermissions(
                             can_send_messages=True,
                             can_send_other_messages=True,
@@ -1022,43 +955,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     db.reset_warnings(target_id)
                 except Exception as e:
-                    # Agar restrict FAILED hua (jaise admin rights nahi hain), tabhi ye message aayega
                     await context.bot.send_message(chat_id, f"❌ **Error:** Could not unmute. Please check my admin permissions.", parse_mode='Markdown')
-                    return # Code yahan se ruk jayega
-
-                # 2. Agar unmute SUCCESSFUL ho gaya, tab message ko edit karenge
+                    return
                 try:
                     await query.edit_message_text(text=f"✅ User `{target_id}` has been **Unmuted**.", parse_mode='Markdown')
-                    # Note: Maine yahan se ek extra send_message hata diya hai, 
-                    # kyunki aapka 'auto_reset_on_unmute' function pehle se hi group mein 
-                    # "🔄 User has been unmuted" ka alert bhej raha hai. 
-                    # Isse bot spam nahi karega.
                 except Exception:
-                    # Agar user button par 2 baar click kar de, toh ye minor error ko chup chap ignore karega
                     pass
-            
-async def auto_reset_on_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.chat_member:
-        return
-
-    old = update.chat_member.old_chat_member
-    new = update.chat_member.new_chat_member
-
-    # Pehle restricted tha (muted)
-    if old.status == "restricted" and not old.can_send_messages:
-
-        # Ab normal member ho gaya (unmuted)
-        if new.status in ("member", "administrator", "creator") or \
-           (new.status == "restricted" and new.can_send_messages):
-
-            user_id = new.user.id
-            db.reset_warnings(user_id)
-
-            await context.bot.send_message(
-                update.effective_chat.id,
-                f"🔄 {new.user.mention_html()} has been unmuted.",
-                parse_mode="HTML"
-            )
 
 # ========== COMMANDS ==========
 
@@ -1257,40 +1159,30 @@ async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     chat_id = update.effective_chat.id
     config = db.get_config(chat_id)
-    warn_limit = config[1]
-    action = config[2]
     edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
-
-    bio_check = config[7]          # <<< NEW
-    bio_action = config[8]         # <<< NEW
+    bio_check = config[7]
+    bio_action = config[8]
 
     edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
     edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-    mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-    ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-
-    # Bio check status and action display
     bio_status = "ON ✅" if bio_check else "OFF ❌"
     bio_action_display = bio_action.upper()
-    bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"   # <<< NEW
+    bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"
 
     text = (
         "⚙️ **Group Configuration**\n\n"
-        f"⚠️ **Current Warn Limit:** {warn_limit}\n"
-        f"🔨 **Current Action:** {action.upper()}\n"
         f"✏️ **Edit Guard:** {edit_status}\n"
-        f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"   # <<< NEW
+        f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"
     )
 
     keyboard = [
-        [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-        [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
         [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
-        [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],   # <<< NEW – opens bio sub‑menu
+        [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],
         [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
     ]
 
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
     
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ GROUP-ONLY CHECK
