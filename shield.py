@@ -2734,28 +2734,50 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
                 return
 
+            
             # CASE 2: Exactly reached limit → Mute/Ban
             elif count == warn_limit:
                 if action == "mute":
                     try:
-                        await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
+                        await context.bot.restrict_chat_member(
+                            chat_id,
+                            user.id,
+                            ChatPermissions(can_send_messages=False)
+                        )
+                        # ✅ Reset warnings on successful mute
+                        db.reset_warnings(user.id)
+
                         txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
-                        kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                        kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}"),
+                               InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
-                        db.decrease_warning(user.id)
+                        await context.bot.send_message(
+                            chat_id,
+                            "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.",
+                            parse_mode='HTML'
+                        )
+                        db.decrease_warning(user.id)   # ✅ Now properly indented (4 spaces)
+
                 elif action == "ban":
                     try:
                         await context.bot.ban_chat_member(chat_id, user.id)
+                        # ✅ Reset warnings on successful ban
+                        db.reset_warnings(user.id)
+
                         txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
-                        kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                        kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"),
+                               InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
-                        db.decrease_warning(user.id)
+                        await context.bot.send_message(
+                            chat_id,
+                            "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.",
+                            parse_mode='HTML'
+                        )
+                        db.decrease_warning(user.id)   # ✅ Now properly indented (4 spaces)
                 return
-
+    
             # CASE 3: Normal warning (below limit)
             else:
                 base_info_text = (
