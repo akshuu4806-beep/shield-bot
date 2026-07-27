@@ -2395,7 +2395,8 @@ async def edited_message_handler(update: Update, context: ContextTypes.DEFAULT_T
         pass
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
+    if not update.message:
+        return
     user = update.message.from_user
     chat_id = update.effective_chat.id
 
@@ -2403,37 +2404,32 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_gbanned, gban_reason = db.is_gbanned(user.id)
     if is_gbanned:
         try:
-            await update.message.delete() # Unka message uda do
-            await context.bot.ban_chat_member(chat_id, user.id) # Unko group se ban kar do
+            await update.message.delete()
+            await context.bot.ban_chat_member(chat_id, user.id)
         except:
             pass
-        return # Code aage run hone se rok do
-    # 👆 GBAN CHECK END 👆
-    
+        return
+
     # UPDATE SCANNED STAT
     db.update_stat('scanned')
 
     # 1. Identify Channel Posts (BULLETPROOF VERSION)
     is_channel_post = False
-    
-    # Case A: Forwarded from a channel (Naye aur Purane dono PTB versions ke liye)
+
     if getattr(update.message, 'forward_origin', None):
         if update.message.forward_origin.type == 'channel':
             is_channel_post = True
-    elif getattr(update.message, 'forward_from_chat', None):  
+    elif getattr(update.message, 'forward_from_chat', None):
         if update.message.forward_from_chat.type == 'channel':
             is_channel_post = True
 
-    # Case B: Send as Channel (Jab log Group mein Channel ban kar chat karte hain)
     if getattr(update.message, 'sender_chat', None) and update.message.sender_chat.type == 'channel':
         if not getattr(update.message, 'is_automatic_forward', False):
             is_channel_post = True
 
-    # Get config
     config = db.get_config(chat_id)
     anti_channel_enabled = config[4] if len(config) > 4 else 1
 
-    # Determine if user is Admin or allowd
     is_exempt = False
     if user:
         if user.id in ADMIN_IDS or db.is_allowed(user.id):
@@ -2443,54 +2439,50 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mem = await context.bot.get_chat_member(chat_id, user.id)
                 if mem.status in ['administrator', 'creator']:
                     is_exempt = True
-            except: pass
+            except:
+                pass
 
     # ANTI-CHANNEL LOGIC
     if is_channel_post:
         if anti_channel_enabled:
-            # Agar log 'Send As Channel' use karte hain, toh unhe delete karo (Even Admins!)
-            # Par agar admin normal forward kar raha hai, toh allow karo (is_exempt kaam aayega)
             is_anonymous_channel_chat = getattr(update.message, 'sender_chat', None) is not None
-            
             if not is_exempt or is_anonymous_channel_chat:
                 try:
                     await update.message.delete()
-                    return # Stop execution here
-                except Exception as e: 
+                    return
+                except Exception as e:
                     error_msg = str(e).lower()
                     if "can't be deleted" in error_msg or "not enough rights" in error_msg:
                         try:
                             await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-                        except: pass
-                    return # Stop execution even if delete fails
+                        except:
+                            pass
+                    return
         else:
-            # 💡 MAIN FIX: If OFF, bypass all other strict filters (Link/Virus) for this channel post!
             is_exempt = True
-            
 
     # 2. Private / Group Logic
     if update.effective_chat.type == 'private':
-        if user: db.add_user(user)
+        if user:
+            db.add_user(user)
         return
 
-    # ---> IGNORE JOIN/LEFT MESSAGES <---
     if update.message.new_chat_members or update.message.left_chat_member:
         return
-    
+
     db.add_group(chat_id, update.effective_chat.title)
-    # 'mute_hrs' ki jagah ab 'action' fetch kar rahe hain
     delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled = db.get_config(chat_id)
-    
-    # Media Logic (Applies to everyone)
-    is_media = any([update.message.photo, update.message.video, update.message.document, 
+
+    is_media = any([update.message.photo, update.message.video, update.message.document,
                     update.message.animation, update.message.voice, update.message.sticker])
     if is_media:
         db.update_stat('media_deleted')
         context.job_queue.run_once(delete_msg_job, delay_min * 60, chat_id=chat_id, data=update.message.message_id)
 
-    if not user: return 
+    if not user:
+        return
     msg_text = update.message.text or update.message.caption
-    
+
     # ===================================================================
     # CUSTOM BLOCKLISTS (Words & Sticker Packs)
     # ===================================================================
@@ -2498,23 +2490,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         blocked_word_found = False
         blocked_sticker_found = False
         caught_word = ""
-    
-        # 1. Check Custom Words
+
         if msg_text:
             all_blocked_words = db.get_blocked_words() + db.get_local_words(chat_id)
             for word in all_blocked_words:
                 if re.search(r'\b' + re.escape(word) + r'\b', msg_text.lower()):
                     blocked_word_found = True
-                    caught_word = word  
+                    caught_word = word
                     break
-    
-        # 2. Check Custom Sticker Packs
+
         if not blocked_word_found and update.message.sticker and update.message.sticker.set_name:
             all_blocked_stickers = db.get_blocked_stickers() + db.get_local_stickers(chat_id)
             if update.message.sticker.set_name in all_blocked_stickers:
                 blocked_sticker_found = True
-    
-        # 🟢 CASE A: BLOCKED WORD
+
         if blocked_word_found:
             db.update_stat('abuse_caught')
             try:
@@ -2526,21 +2515,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-        
+
             current_time = time.time()
             if current_time - context.chat_data.get(f"last_word_alert_{user.id}", 0) > 10:
                 context.chat_data[f"last_word_alert_{user.id}"] = current_time
                 try:
                     alert_msg = await context.bot.send_message(
-                        chat_id=chat_id, 
-                        text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>", 
+                        chat_id=chat_id,
+                        text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>",
                         parse_mode='HTML'
                     )
                     context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
-                except Exception: pass
+                except Exception:
+                    pass
             return
-    
-        # 🔴 CASE B: BLOCKED STICKER
+
         elif blocked_sticker_found:
             db.update_stat('nsfw_blocked')
             try:
@@ -2552,7 +2541,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-        
+
             current_time = time.time()
             if current_time - context.chat_data.get(f"last_sticker_alert_{user.id}", 0) > 10:
                 context.chat_data[f"last_sticker_alert_{user.id}"] = current_time
@@ -2561,7 +2550,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
                     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
-                except Exception: pass
+                except Exception:
+                    pass
             return
 
     # ===================================================================
@@ -2590,10 +2580,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await context.bot.get_file(file_id)
             await file.download_to_drive(temp_file_path)
             is_explicit = await check_image_nsfw_api(temp_file_path)
-        
+
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-        
+
             if is_explicit:
                 db.update_stat('nsfw_blocked')
                 try:
@@ -2605,7 +2595,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                         except:
                             pass
-            
+
                 current_time = time.time()
                 if current_time - context.chat_data.get(f"last_nsfw_alert_{user.id}", 0) > 10:
                     context.chat_data[f"last_nsfw_alert_{user.id}"] = current_time
@@ -2613,10 +2603,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     admin_alert = f"🚨 <b>NSFW Content Detected</b>\n\n👤 <b>Sender:</b> {user.mention_html()}{admin_tags}"
                     try:
                         nsfw_alert_msg = await context.bot.send_message(
-                            chat_id=chat_id, 
-                            text=admin_alert, 
-                            parse_mode='HTML', 
-                            disable_notification=True 
+                            chat_id=chat_id,
+                            text=admin_alert,
+                            parse_mode='HTML',
+                            disable_notification=True
                         )
                         context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
                     except Exception as e:
@@ -2626,23 +2616,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Universal NSFW Processing Error: {e}")
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            
+
     # ===================================================================
-    # VIOLATION CHECKS (Anti-Link, Bio Shield, Anti-Virus, Anti-Contact)
+    # VIOLATION CHECKS (Anti-Link, Bio Shield, Anti-Virus)
     # ===================================================================
-    # Only proceed if User is NOT exempt
     if not is_exempt:
         violation, reason = False, ""
-        
-        # 1. ANTI-LINK (Message)
+
         if msg_text and has_link(msg_text):
             violation, reason = True, "Link in Message"
 
-        # Inside message_handler, after checking anti-link etc., find the bio check part:
-
-        # 2. BIO CHECK (Link detection) – only if enabled
         if not violation:
-            # Get bio_check and bio_action from config
             config = db.get_config(chat_id)
             bio_check = config[7]
             bio_action = config[8]
@@ -2658,25 +2642,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     violation = True
                     reason = "Link in Bio"
                     db.update_stat('bio_caught')
-                    # Now we need to apply the selected action
-                    # We'll handle this after the violation block
-                    # We'll store the bio_action to use later
-                    # We'll set a flag to use bio_action instead of the default punishment
-        
-        # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
+
         if not violation and update.message.document:
             file_name = update.message.document.file_name
             if file_name:
                 ext = file_name.lower().split('.')[-1]
                 if ext in ['apk', 'exe', 'bat', 'scr', 'vbs', 'js', 'zip', 'bin']:
                     violation, reason = True, f"Malicious File (.{ext})"
-    
+
         # ===================================================================
         # PUNISHMENT LOGIC
         # ===================================================================
         if violation:
             db.update_stat('warnings_issued')
-            try: 
+            try:
                 await update.message.delete()
             except Exception as e:
                 error_msg = str(e).lower()
@@ -2686,29 +2665,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
 
-    # Determine which action to use
+            # Determine which action to use
             if reason == "Link in Bio":
-        # Use bio_action from config
                 config = db.get_config(chat_id)
                 action = config[8]   # bio_action
             else:
-        # Use default group action for other violations
                 config = db.get_config(chat_id)
                 action = config[2]   # default action (mute/ban)
 
             count = db.add_warning(user.id)
-            warn_limit = config[1]   # common for all
-
+            warn_limit = config[1]
             safe_name = html.escape(user.full_name)
 
-    # If we are using bio_action and it's 'warn', we still use the warning system
-    # If it's 'mute' or 'ban', we apply directly without warning count?
-    # The requirement: "mute/ban and warning wala button" – they want to choose the action.
-    # We'll keep the warning system only for 'warn' action, and for 'mute'/'ban' we apply immediately without counting warnings.
             if action == "warn":
-        # Normal warning logic
+                # Normal warning logic
                 if count > warn_limit:
-            # Already over limit – this shouldn't happen normally
+                    # Already over limit – this shouldn't happen normally
                     if action == "mute":
                         msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
                         context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
@@ -2739,7 +2711,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             db.decrease_warning(user.id)
                     return
                 else:
-            # Normal warning (below limit)
+                    # Normal warning (below limit)
                     base_info_text = (
                         f"👤 <b>User:</b> {user.mention_html()}\n"
                         f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
@@ -2753,7 +2725,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                     await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
             else:
-        # action is 'mute' or 'ban' – apply directly (no warning count)
+                # action is 'mute' or 'ban' – apply directly (no warning count)
                 if action == "mute":
                     try:
                         await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
