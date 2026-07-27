@@ -766,7 +766,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # --- CONFIGURATION LOGIC (INSTANT TICK) ---
-    if query.data.startswith("cfg_") or query.data.startswith("setwarn_") or query.data.startswith("bio_warn_limit_"):
+    if query.data.startswith("cfg_") or query.data.startswith("setwarn_") or query.data.startswith("bio_warn_limit_") or query.data.startswith("bio_"):
         if query.data == "cfg_edit":
             edit_guard_enabled = not db.is_edit_guard_enabled(chat_id)
             db.set_edit_guard(chat_id, edit_guard_enabled)
