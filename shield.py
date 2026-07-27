@@ -894,7 +894,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "When enabled, the bot will scan members' bios for links.\n"
                 "Select the punishment for violators:"
             )
-               keyboard = [
+            keyboard = [
                 [InlineKeyboardButton(f"Toggle {status}", callback_data="bio_toggle")],
                 [InlineKeyboardButton(warn_btn, callback_data="bio_warn"), InlineKeyboardButton(mute_btn, callback_data="bio_mute"), InlineKeyboardButton(ban_btn, callback_data="bio_ban")],
                 [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
