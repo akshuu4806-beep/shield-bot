@@ -135,9 +135,12 @@ class PersistentDB:
         
     def get_config(self, chat_id):
         s = self.group_config.find_one({"_id": chat_id})
-        return (s.get("delay_minutes", 1), s.get("warn_limit", 3), s.get("action", "mute"), 
-                s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1),
-                s.get("anti_bot", 1)) if s else (1, 3, "mute", 0, 1, 1, 1)
+        if s:
+            return (s.get("delay_minutes", 1), s.get("warn_limit", 3), s.get("action", "mute"),
+                    s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1),
+                    s.get("anti_bot", 1), s.get("bio_check", 1))   # 👈 default 1 (ON)
+        else:
+            return (1, 3, "mute", 0, 1, 1, 1, 1)
 
     
     def set_anti_bot(self, chat_id, enabled):
@@ -334,6 +337,10 @@ class PersistentDB:
 
     def get_gbans(self):
         return [(u["_id"], u.get("reason", "No reason")) for u in self.gbans.find()]
+
+    # Ye method add karein (kisi bhi jagah, lekin get_config ke upar rakhein)
+    def set_bio_check(self, chat_id, enabled):
+        self.group_config.update_one({"_id": chat_id}, {"$set": {"bio_check": 1 if enabled else 0}}, upsert=True)
 
 db = PersistentDB()
 
@@ -588,6 +595,33 @@ async def delete_msg_job(context: ContextTypes.DEFAULT_TYPE):
     if chat_id and message_id:
         BULK_DELETE_QUEUE[chat_id].append(message_id)
 
+async def render_bio_config(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id, bio_check_enabled, warn_limit, action):
+    bio_status = "🟢 ON" if bio_check_enabled else "🔴 OFF"
+    mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
+    ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+
+    text = (
+        "🔍 **Bio Security Configuration**\n\n"
+        f"📌 **Bio Check:** {bio_status}\n"
+        f"⚠️ **Warn Limit:** {warn_limit}\n"
+        f"🔨 **Punishment:** {action.upper()}"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton(f"🔄 Toggle Bio: {bio_status}", callback_data="bio_toggle")],
+        [InlineKeyboardButton(f"⚠️ Warn Limit ({warn_limit})", callback_data="bio_cfg_warn")],
+        [InlineKeyboardButton(mute_btn, callback_data="bio_cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="bio_cfg_ban")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")],
+        [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+    ]
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    else:
+        # Agar kabhi direct call ho to (currently nahi)
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = update.effective_chat.id
@@ -737,111 +771,143 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # --- CONFIGURATION LOGIC (INSTANT TICK) ---
-    if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
+    if query.data.startswith("cfg_") or query.data.startswith("setwarn_") or query.data.startswith("bio_"):
         config = db.get_config(chat_id)
         warn_limit, action = config[1], config[2]
-        
-        # 0. Database se current status check kiya
         edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+        bio_check_enabled = config[7]
 
-        # 1. Action: Warn Limit Change
-        if query.data.startswith("setwarn_"):
-            limit = int(query.data.split("_")[1])
-            if limit == warn_limit:
-                return await query.answer("✅ Already selected!", show_alert=False)
-            db.set_warn_limit(chat_id, limit)
-            warn_limit = limit 
-            await query.answer(f"✅ Warning limit changed to {limit}")
-
-        # 2. Action: Mute/Ban Change
-        elif query.data in ["cfg_mute", "cfg_ban"]:
-            new_action = query.data.split("_")[1]
-            if new_action == action:
-                return await query.answer("✅ Already selected!", show_alert=False)
-            db.set_action(chat_id, new_action)
-            action = new_action 
-            await query.answer(f"✅ Punishment set to {action.upper()}")
-
-        # 3. Action: Edit Guard Toggle
-        elif query.data == "cfg_edit":
-            edit_guard_enabled = not edit_guard_enabled # Toggle
-            db.set_edit_guard(chat_id, edit_guard_enabled)
-            await query.answer(f"✅ Edit Guard turned {'ON' if edit_guard_enabled else 'OFF'}")
-
-        # 4. Menu: Render Warn Limits Page (Dusre page par jana)
-        elif query.data == "cfg_warn":
-            def get_btn(num):
-                txt = f"✅ {num}" if num == warn_limit else str(num)
-                return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
-            
-            keyboard = [
-                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
-                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
-                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
-            ]
-            try: 
-                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            except Exception: pass
-            return
-
-        # 5. Back to main config menu
-        elif query.data == "cfg_main":
-            # Re‑render the main config menu
-            config = db.get_config(chat_id)
-            warn_limit = config[1]
-            action = config[2]
-            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
-            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
-            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+        # ── MAIN MENU ──
+        if query.data == "cfg_main":
+            bio_status = "🟢 ON" if bio_check_enabled else "🔴 OFF"
+            edit_status = "🟢 ON" if edit_guard_enabled else "🔴 OFF"
             text = (
-                f"⚙️ **Group Configuration**\n\n"
-                f"⚠️ **Limit:** {warn_limit}\n"
-                f"🔨 **Action:** {action.upper()}\n"
+                "⚙️ **Group Configuration**\n\n"
+                f"🔍 **Bio Check:** {bio_status}\n"
                 f"✏️ **Edit Guard:** {edit_status}"
             )
             keyboard = [
-                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+                [InlineKeyboardButton(f"🔍 Bio Check: {bio_status}", callback_data="cfg_bio")],
+                [InlineKeyboardButton(f"✏️ Edit Guard: {edit_status}", callback_data="cfg_edit")],
+                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await query.answer()
+            return
+
+        # ── ENTER BIO CONFIG ──
+        if query.data == "cfg_bio":
+            await render_bio_config(update, context, chat_id, bio_check_enabled, warn_limit, action)
+            await query.answer()
+            return
+
+        # ── BIO TOGGLE ──
+        if query.data == "bio_toggle":
+            new_state = not bio_check_enabled
+            db.set_bio_check(chat_id, new_state)
+            await query.answer(f"Bio Check {'ON' if new_state else 'OFF'}")
+            # Re-render bio config
+            config = db.get_config(chat_id)
+            warn_limit, action = config[1], config[2]
+            bio_check_enabled = config[7]
+            await render_bio_config(update, context, chat_id, bio_check_enabled, warn_limit, action)
+            return
+
+        # ── BIO WARN LIMIT ──
+        if query.data == "bio_cfg_warn":
+            def get_btn(num):
+                txt = f"✅ {num}" if num == warn_limit else str(num)
+                return InlineKeyboardButton(txt, callback_data=f"bio_setwarn_{num}")
+            keyboard = [
+                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
+                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
+                [InlineKeyboardButton("⬅️ Back", callback_data="bio_cfg_main")]
+            ]
+            await query.edit_message_text("⚠️ **Select Warning Limit for Bio Violations:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await query.answer()
+            return
+
+        # ── BIO SET WARN ──
+        if query.data.startswith("bio_setwarn_"):
+            limit = int(query.data.split("_")[2])
+            if limit == warn_limit:
+                await query.answer("✅ Already selected!", show_alert=False)
+                return
+            db.set_warn_limit(chat_id, limit)
+            warn_limit = limit
+            await query.answer(f"✅ Warning limit changed to {limit}")
+            # Re-render bio config
+            config = db.get_config(chat_id)
+            bio_check_enabled = config[7]
+            await render_bio_config(update, context, chat_id, bio_check_enabled, warn_limit, action)
+            return
+
+        # ── BIO MUTE ──
+        if query.data == "bio_cfg_mute":
+            if action == "mute":
+                await query.answer("✅ Already Mute!", show_alert=False)
+                return
+            db.set_action(chat_id, "mute")
+            action = "mute"
+            await query.answer("✅ Punishment set to MUTE")
+            # Re-render bio config
+            config = db.get_config(chat_id)
+            bio_check_enabled = config[7]
+            warn_limit = config[1]
+            await render_bio_config(update, context, chat_id, bio_check_enabled, warn_limit, action)
+            return
+
+        # ── BIO BAN ──
+        if query.data == "bio_cfg_ban":
+            if action == "ban":
+                await query.answer("✅ Already Ban!", show_alert=False)
+                return
+            db.set_action(chat_id, "ban")
+            action = "ban"
+            await query.answer("✅ Punishment set to BAN")
+            # Re-render bio config
+            config = db.get_config(chat_id)
+            bio_check_enabled = config[7]
+            warn_limit = config[1]
+            await render_bio_config(update, context, chat_id, bio_check_enabled, warn_limit, action)
+            return
+
+        # ── BIO BACK TO MAIN ──
+        if query.data == "bio_cfg_main":
+            # Re-render bio config (same as entering)
+            config = db.get_config(chat_id)
+            bio_check_enabled = config[7]
+            warn_limit = config[1]
+            action = config[2]
+            await render_bio_config(update, context, chat_id, bio_check_enabled, warn_limit, action)
+            await query.answer()
+            return
+
+        # ── EDIT GUARD TOGGLE (remains in main) ──
+        if query.data == "cfg_edit":
+            new_state = not edit_guard_enabled
+            db.set_edit_guard(chat_id, new_state)
+            await query.answer(f"Edit Guard {'ON' if new_state else 'OFF'}")
+            # Re-render main config
+            config = db.get_config(chat_id)
+            bio_check_enabled = config[7]
+            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            bio_status = "🟢 ON" if bio_check_enabled else "🔴 OFF"
+            edit_status = "🟢 ON" if edit_guard_enabled else "🔴 OFF"
+            text = (
+                "⚙️ **Group Configuration**\n\n"
+                f"🔍 **Bio Check:** {bio_status}\n"
+                f"✏️ **Edit Guard:** {edit_status}"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"🔍 Bio Check: {bio_status}", callback_data="cfg_bio")],
+                [InlineKeyboardButton(f"✏️ Edit Guard: {edit_status}", callback_data="cfg_edit")],
                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             await query.answer()
             return
         
-        # ==========================================
-        # 5. UI REFRESHER (Sab kuch yahan update hoga instantly!)
-        # ==========================================
-        mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-        ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-        
-        edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
-        edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-        
-        text = (
-            f"⚙️ **Group Configuration**\n\n"
-            f"⚠️ **Limit:** {warn_limit}\n"
-            f"🔨 **Action:** {action.upper()}\n"
-            f"✏️ **Edit Guard:** {edit_status}"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-            [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-            [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
-            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
-        ]
-        
-        # Pura message naye buttons ke sath recreate kar diya
-        try: 
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception: 
-            pass 
-            
-        return
-
     # --- OTHER ADMIN BUTTONS (allow, Unban, Unmute) ---
     try: await query.answer() 
     except: pass
@@ -1130,45 +1196,33 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
     
 async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ GROUP-ONLY CHECK
     if update.effective_chat.type == 'private':
         await update.message.reply_text("❌ This command only works in groups.")
         return
-    
-    if not await is_user_admin(update, context): 
-        msg = await update.message.reply_text("❌ You have not permission.")
-        # Make sure you have delete_after_delay defined, or remove this task
-        
+    if not await is_user_admin(update, context):
+        await update.message.reply_text("❌ You have not permission.")
         return
-        
+
     chat_id = update.effective_chat.id
     config = db.get_config(chat_id)
-    warn_limit = config[1]
-    action = config[2]
+    warn_limit, action, edit_guard_enabled, bio_check_enabled = config[1], config[2], db.is_edit_guard_enabled(chat_id), config[7]
 
-    # 👇 Fetch Edit Guard status
-    edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
-    edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
-    edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-
-    mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-    ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+    bio_status = "🟢 ON" if bio_check_enabled else "🔴 OFF"
+    edit_status = "🟢 ON" if edit_guard_enabled else "🔴 OFF"
 
     text = (
         "⚙️ **Group Configuration**\n\n"
-        f"⚠️ **Current Warn Limit:** {warn_limit}\n"
-        f"🔨 **Current Action:** {action.upper()}\n"
-        f"✏️ **Edit Guard:** {edit_status}" # <--- Shows status in text
+        f"🔍 **Bio Check:** {bio_status}\n"
+        f"✏️ **Edit Guard:** {edit_status}"
     )
 
     keyboard = [
-        [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-        [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-        [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")], # <--- The new toggle button
+        [InlineKeyboardButton(f"🔍 Bio Check: {bio_status}", callback_data="cfg_bio")],
+        [InlineKeyboardButton(f"✏️ Edit Guard: {edit_status}", callback_data="cfg_edit")],
         [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
     ]
-
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
     
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ GROUP-ONLY CHECK
@@ -2465,7 +2519,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db.add_group(chat_id, update.effective_chat.title)
     # 'mute_hrs' ki jagah ab 'action' fetch kar rahe hain
-    delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled = db.get_config(chat_id)
+    delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled, bio_check_enabled = db.get_config(chat_id)
     
     # Media Logic (Applies to everyone)
     is_media = any([update.message.photo, update.message.video, update.message.document, 
@@ -2624,8 +2678,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg_text and has_link(msg_text):
             violation, reason = True, "Link in Message"
 
-        # 2. BIO CHECK (Link + Contact)
-        if not violation:
+        # 2. BIO CHECK (Link + Contact) – Only if bio_check is enabled
+        if not violation and bio_check_enabled:
             try:
                 u_chat = await context.bot.get_chat(user.id)
                 user_bio = u_chat.bio
@@ -2636,9 +2690,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if has_link(user_bio):
                     violation, reason = True, "Link in Bio"
                     db.update_stat('bio_caught')
-                elif anti_contact_enabled and has_contact_info(user_bio):  # <-- NAYA BIO CHECK
-                    violation, reason = True, "Phone/Email in Bio"
-                    db.update_stat('bio_caught')
+        # Agar aapke paas anti_contact_enabled variable hai toh usko bhi condition me rakh sakte hain
+        # else:
+        #     if has_contact_info(user_bio):
+        #         violation, reason = True, "Phone/Email in Bio"
+        #         db.update_stat('bio_caught')
 
         # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
