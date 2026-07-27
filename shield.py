@@ -391,11 +391,21 @@ async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: return False
 
 def has_link(text):
-    if not text: return False
-    link_patterns = [r'http[s]?://\S+', r'www\.\S+', r't\.me/\S+', r'\S+\.(com|org|net|in|co|io|xyz|me|info)\b']
-    for pattern in link_patterns:
-        if re.search(pattern, text, re.IGNORECASE): return True
+    if not text:
+        return False
+    # Comprehensive link patterns
+    patterns = [
+        r'http[s]?://\S+',                     # http://, https://
+        r'www\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}',   # www.example.com
+        r't\.me/\S+',                          # t.me/xyz
+        r'telegram\.me/\S+',                   # telegram.me/xyz
+        r'[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/\S*)?' # example.com, example.com/page
+    ]
+    for pattern in patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
     return False
+    
 
 async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[int | None, str | None, str]:
     """
