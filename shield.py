@@ -2988,15 +2988,7 @@ async def enforce_bot_admin_status(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         print(f"❌ [MIDDLEWARE] Error: {e}")
         raise ApplicationHandlerStop()
-        
-
-    except ApplicationHandlerStop:
-        raise  # This tells the Python-Telegram-Bot application to halt the update completely
-    except Exception as e:
-        print(f"Admin Check Error: {e}")
-        # If any unexpected error occurs, stay silent to prevent spam
-        raise ApplicationHandlerStop()
-    
+            
 # ========== MAIN EXECUTION ==========
 def main():
     # Application builder
