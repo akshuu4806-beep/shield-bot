@@ -499,7 +499,122 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
     # If nothing matches
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
-    
+
+# ========== BIO LINK ENFORCER LOGIC ==========
+async def enforce_bio_link_policy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Bio-link checking logic:
+    - Admin ya Allowed user: Completely safe.
+    - Non-Admin & Unallowed (Bio me Link): Mute/Action, warnings count NAHI badhega.
+    - Non-Admin & Unallowed (Bio me Link NAHI): Clean status, Auto-Unmute.
+    """
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if not user or not chat or chat.type not in ['group', 'supergroup']:
+        return
+
+    if user.is_bot:
+        return
+
+    user_id = user.id
+    chat_id = chat.id
+
+    # 1. Admin ya Whitelisted check
+    is_admin = False
+    if user_id in ADMIN_IDS:
+        is_admin = True
+    else:
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            if member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                is_admin = True
+        except Exception:
+            pass
+
+    is_whitelisted = db.is_allowed(user_id)
+
+    # Admin aur Whitelisted users ko skip karein
+    if is_admin or is_whitelisted:
+        if db.get_bio_violation(user_id):
+            db.set_bio_violation(user_id, False)
+        return
+
+    # 2. User Bio Fetch check
+    try:
+        full_user_chat = await context.bot.get_chat(user_id)
+        user_bio = getattr(full_user_chat, 'bio', '') or ''
+    except Exception as e:
+        logger.error(f"Failed to fetch bio for {user_id}: {e}")
+        return
+
+    bio_has_url = has_link(user_bio)
+
+    # 3. Action Logic
+    if bio_has_url:
+        db.set_bio_violation(user_id, True)
+        
+        # Message delete agar ho sake
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception:
+                pass
+
+        config = db.get_config(chat_id)
+        action_type = config[2]  # Default: 'mute' ya 'ban'
+        
+        try:
+            if action_type == "ban":
+                await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+                action_text = "banned"
+            else:
+                # Default Action: Restrict/Mute (Without adding warning)
+                await context.bot.restrict_chat_member(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    permissions=ChatPermissions(can_send_messages=False)
+                )
+                action_text = "muted"
+
+            punish_msg = (
+                f"⚠️ **Bio Link Violation!**\n"
+                f"User: [{html.escape(user.first_name)}](tg://user?id={user_id})\n"
+                f"Action: {action_text.title()}\n"
+                f"📌 *Note: Bio se link hatayein chat access wapas pane ke liye.*"
+            )
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=punish_msg, 
+                parse_mode='Markdown'
+            )
+            
+            # Message auto-delete setup
+            context.job_queue.run_once(delete_msg_job, 10, data=sent_msg.message_id, chat_id=chat_id)
+
+        except Forbidden:
+            logger.warning(f"Bot lacks permissions to punish {user_id} in {chat_id}")
+        except BadRequest as e:
+            logger.error(f"Failed to punish user {user_id}: {e}")
+
+    else:
+        # 4. Agar bio me link NAHI hai aur pehle violator tha, to un-mute karein
+        if db.get_bio_violation(user_id):
+            db.set_bio_violation(user_id, False)
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    permissions=ChatPermissions(
+                        can_send_messages=True,
+                        can_send_media_messages=True,
+                        can_send_other_messages=True,
+                        can_add_web_page_previews=True
+                    )
+                )
+            except Exception:
+                pass
+
 async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
         await update.message.reply_text("❌ This command only works in groups.")
@@ -2932,7 +3047,8 @@ def main():
 
     app_bot.add_handler(ChatMemberHandler(auto_reset_on_unmute, ChatMemberHandler.CHAT_MEMBER))
     app_bot.add_handler(ChatMemberHandler(track_bot_status, ChatMemberHandler.MY_CHAT_MEMBER))
-
+    # Group messages par sabse pehle bio check run hoga (group=-1 priority)
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & filters.ChatType.GROUPS, enforce_bio_link_policy), group=-1)
     # Bulk delete flusher – har 2 seconds mein queue process karega
     app_bot.job_queue.run_repeating(flush_bulk_deletes, interval=2, first=2)
     
