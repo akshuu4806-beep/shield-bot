@@ -2935,4 +2935,11 @@ def main():
 
 if __name__ == '__main__':
     keep_alive() # Flask server starts in background
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print("❌ BOT CRASHED:")
+        traceback.print_exc()
+
     main() # Telegram bot starts
