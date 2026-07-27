@@ -2995,7 +2995,7 @@ def main():
     app_bot = Application.builder().token(TOKEN).connect_timeout(60).read_timeout(60).write_timeout(60).pool_timeout(60).build()
 
     # 👇 ADD THIS LINE RIGHT HERE (group=-1 makes it run before everything else)
-    app_bot.add_handler(TypeHandler(Update, enforce_bot_admin_status), group=-1)
+    #app_bot.add_handler(TypeHandler(Update, enforce_bot_admin_status), group=-1)
     
     # ✅ FIX: All handlers now use app_bot instead of app
     app_bot.add_handler(CommandHandler("start", start_command))
