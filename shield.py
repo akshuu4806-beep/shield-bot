@@ -2924,7 +2924,7 @@ def main():
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, anti_bot_handler))
     app_bot.add_handler(MessageHandler((~filters.COMMAND), message_handler))
 
-    app_bot.add_handler(ChatMemberHandler(auto_reset_on_unmute, ChatMemberHandler.CHAT_MEMBER))
+    # app_bot.add_handler(ChatMemberHandler(auto_reset_on_unmute, ChatMemberHandler.CHAT_MEMBER))
     app_bot.add_handler(ChatMemberHandler(track_bot_status, ChatMemberHandler.MY_CHAT_MEMBER))
 
     # Bulk delete flusher – har 2 seconds mein queue process karega
