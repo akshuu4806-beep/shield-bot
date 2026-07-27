@@ -2714,9 +2714,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not violation:
             config = db.get_config(chat_id)
-            bio_check = config[7]
+            bio_check = config[7]      # 0 = OFF, 1 = ON
             bio_action = config[8]
 
+            # 🔹 BIO CHECK – ONLY RUNS IF bio_check IS 1 (ON)
             if bio_check:
                 try:
                     u_chat = await context.bot.get_chat(user.id)
@@ -2737,7 +2738,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     violation, reason = True, f"Malicious File (.{ext})"
 
         # ===================================================================
-        # PUNISHMENT LOGIC
+        # PUNISHMENT LOGIC – FULLY FIXED
         # ===================================================================
         if violation:
             db.update_stat('warnings_issued')
@@ -2751,35 +2752,36 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
 
-            # Fetch the full config again (or use the one fetched at the start)
-            config = db.get_config(chat_id)   # We already have it, but re-fetch to be safe
-            delay_min, warn_limit, action, _, _, _, _, bio_check, bio_action, bio_warn_limit = config
+            # Fetch the full config (we already have it, but re‑fetch for clarity)
+            config = db.get_config(chat_id)
+            delay_min, warn_limit, general_action, _, _, _, _, bio_check, bio_action, bio_warn_limit = config
 
             # Determine which action and limit to use
             if reason == "Link in Bio":
                 action = bio_action
                 limit_to_use = bio_warn_limit
             else:
+                action = general_action      # For normal violations, apply direct action (mute/ban)
                 limit_to_use = warn_limit
 
             count = db.add_warning(user.id)
             safe_name = html.escape(user.full_name)
 
             if action == "warn":
-                # Normal warning logic
+                # -------------------- WARNING MODE --------------------
                 if count > limit_to_use:
-                    # Already over limit – this shouldn't happen normally
-                    if action == "mute":
+                    # Should never happen, but keep safety net
+                    if general_action == "mute":
                         msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
                         context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
-                    elif action == "ban":
+                    elif general_action == "ban":
                         msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already banned.</b>", parse_mode='HTML')
                         context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
                     return
+
                 elif count == limit_to_use:
-                    # reached limit – apply default action (mute/ban) from config
-                    default_action = action   # action is already bio_action if bio, else general action
-                    if default_action == "mute":
+                    # ✅ Limit reached – apply the GENERAL action (mute/ban)
+                    if general_action == "mute":
                         try:
                             await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
                             txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
@@ -2788,7 +2790,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception:
                             await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
                             db.decrease_warning(user.id)
-                    elif default_action == "ban":
+                    elif general_action == "ban":
                         try:
                             await context.bot.ban_chat_member(chat_id, user.id)
                             txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
@@ -2798,6 +2800,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
                             db.decrease_warning(user.id)
                     return
+
                 else:
                     # Normal warning (below limit)
                     base_info_text = (
@@ -2812,8 +2815,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
                                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                     await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
             else:
-                # action is 'mute' or 'ban' – apply directly (no warning count)
+                # -------------------- DIRECT ACTION (MUTE / BAN) – NO WARNING --------------------
                 if action == "mute":
                     try:
                         await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
@@ -2829,7 +2833,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(chat_id, "🚨 **BAN FAILED:** I need admin rights.", parse_mode='HTML')        
+                        await context.bot.send_message(chat_id, "🚨 **BAN FAILED:** I need admin rights.", parse_mode='HTML')
+                        
                 
 # ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
