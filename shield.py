@@ -335,19 +335,6 @@ class PersistentDB:
     def get_gbans(self):
         return [(u["_id"], u.get("reason", "No reason")) for u in self.gbans.find()]
 
-    def set_bio_violation(self, user_id: int, value: bool):
-        """Set the bio violation flag for a user."""
-        self.users.update_one(
-            {"_id": user_id},
-            {"$set": {"bio_violation": value}},
-            upsert=True
-        )
-
-    def get_bio_violation(self, user_id: int) -> bool:
-        """Return True if the user currently has a bio link violation flagged."""
-        user = self.users.find_one({"_id": user_id})
-        return user.get("bio_violation", False) if user else False
-                           
 db = PersistentDB()
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -499,122 +486,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
     # If nothing matches
     return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
-
-# ========== BIO LINK ENFORCER LOGIC ==========
-async def enforce_bio_link_policy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Bio-link checking logic:
-    - Admin ya Allowed user: Completely safe.
-    - Non-Admin & Unallowed (Bio me Link): Mute/Action, warnings count NAHI badhega.
-    - Non-Admin & Unallowed (Bio me Link NAHI): Clean status, Auto-Unmute.
-    """
-    user = update.effective_user
-    chat = update.effective_chat
-
-    if not user or not chat or chat.type not in ['group', 'supergroup']:
-        return
-
-    if user.is_bot:
-        return
-
-    user_id = user.id
-    chat_id = chat.id
-
-    # 1. Admin ya Whitelisted check
-    is_admin = False
-    if user_id in ADMIN_IDS:
-        is_admin = True
-    else:
-        try:
-            member = await context.bot.get_chat_member(chat_id, user_id)
-            if member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-                is_admin = True
-        except Exception:
-            pass
-
-    is_whitelisted = db.is_allowed(user_id)
-
-    # Admin aur Whitelisted users ko skip karein
-    if is_admin or is_whitelisted:
-        if db.get_bio_violation(user_id):
-            db.set_bio_violation(user_id, False)
-        return
-
-    # 2. User Bio Fetch check
-    try:
-        full_user_chat = await context.bot.get_chat(user_id)
-        user_bio = getattr(full_user_chat, 'bio', '') or ''
-    except Exception as e:
-        logger.error(f"Failed to fetch bio for {user_id}: {e}")
-        return
-
-    bio_has_url = has_link(user_bio)
-
-    # 3. Action Logic
-    if bio_has_url:
-        db.set_bio_violation(user_id, True)
-        
-        # Message delete agar ho sake
-        if update.message:
-            try:
-                await update.message.delete()
-            except Exception:
-                pass
-
-        config = db.get_config(chat_id)
-        action_type = config[2]  # Default: 'mute' ya 'ban'
-        
-        try:
-            if action_type == "ban":
-                await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-                action_text = "banned"
-            else:
-                # Default Action: Restrict/Mute (Without adding warning)
-                await context.bot.restrict_chat_member(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    permissions=ChatPermissions(can_send_messages=False)
-                )
-                action_text = "muted"
-
-            punish_msg = (
-                f"⚠️ **Bio Link Violation!**\n"
-                f"User: [{html.escape(user.first_name)}](tg://user?id={user_id})\n"
-                f"Action: {action_text.title()}\n"
-                f"📌 *Note: Bio se link hatayein chat access wapas pane ke liye.*"
-            )
-            sent_msg = await context.bot.send_message(
-                chat_id=chat_id, 
-                text=punish_msg, 
-                parse_mode='Markdown'
-            )
-            
-            # Message auto-delete setup
-            context.job_queue.run_once(delete_msg_job, 10, data=sent_msg.message_id, chat_id=chat_id)
-
-        except Forbidden:
-            logger.warning(f"Bot lacks permissions to punish {user_id} in {chat_id}")
-        except BadRequest as e:
-            logger.error(f"Failed to punish user {user_id}: {e}")
-
-    else:
-        # 4. Agar bio me link NAHI hai aur pehle violator tha, to un-mute karein
-        if db.get_bio_violation(user_id):
-            db.set_bio_violation(user_id, False)
-            try:
-                await context.bot.restrict_chat_member(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    permissions=ChatPermissions(
-                        can_send_messages=True,
-                        can_send_media_messages=True,
-                        can_send_other_messages=True,
-                        can_add_web_page_previews=True
-                    )
-                )
-            except Exception:
-                pass
-
+    
 async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
         await update.message.reply_text("❌ This command only works in groups.")
@@ -2272,6 +2144,109 @@ async def greact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Failed to add reaction.\nMake sure the message ID is correct and the emoji is allowed in the group.\nError: `{e}`", parse_mode='Markdown')
 
 # ==========================================
+# 🛡️ BIO GUARD LOGIC
+# ==========================================
+async def check_user_bio_and_punish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Bio Guard Logic:
+    1. Admin aur Whitelisted/Allow Users ko Skip karta hai.
+    2. Real-time Bio check karta hai:
+       - Agar Link HAI: Punish karta hai aur bio_violators mein add karta hai.
+       - Agar Link NAHI HAI: Unhe bio_violators se HATA deta hai aur action bypass karta hai.
+    """
+    message = update.message or update.edited_message
+    if not message or not message.from_user or update.effective_chat.type == 'private':
+        return
+
+    user = message.from_user
+    user_id = user.id
+    chat_id = update.effective_chat.id
+
+    # 1. Skip Admins & Bot Owner/Sudo
+    if await is_user_admin(update, context) or db.is_sudo(user_id) or user_id in ADMIN_IDS:
+        if user_id in bio_violators:
+            bio_violators.remove(user_id)
+        return
+
+    # 2. Skip Whitelisted (Allowed) Users
+    if db.is_allowed(user_id):
+        if user_id in bio_violators:
+            bio_violators.remove(user_id)
+        return
+
+    # 3. Check User's Current Bio via Telegram API
+    user_bio = ""
+    try:
+        chat_user = await context.bot.get_chat(user_id)
+        user_bio = chat_user.bio or ""
+    except Exception as e:
+        logger.error(f"Error fetching bio for {user_id}: {e}")
+
+    # 4. Bio Link Verification
+    if has_link(user_bio):
+        # Bio me link MIL GAYA -> User ko list me add karo aur punish karo
+        bio_violators.add(user_id)
+        db.update_stat("bio_caught")
+        
+        # Message delete karne ka try karein
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        # Warning/Punishment logic (Group Config ke mutabiq)
+        warn_count = db.add_warning(user_id)
+        _, warn_limit, action, *_ = db.get_config(chat_id)
+
+        if warn_count >= warn_limit:
+            if action == "mute":
+                try:
+                    await context.bot.restrict_chat_member(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        permissions=ChatPermissions(can_send_messages=False)
+                    )
+                    await context.bot.send_message(
+                        chat_id, 
+                        f"🔇 <b>{html.escape(user.first_name)}</b> has been muted for having links in bio.",
+                        parse_mode='HTML'
+                    )
+                except Exception:
+                    pass
+            elif action == "ban":
+                try:
+                    await context.bot.ban_chat_member(chat_id, user_id)
+                    await context.bot.send_message(
+                        chat_id, 
+                        f"🚫 <b>{html.escape(user.first_name)}</b> has been banned for having links in bio.",
+                        parse_mode='HTML'
+                    )
+                except Exception:
+                    pass
+        else:
+            keyboard = [[
+                InlineKeyboardButton("✅ Allow", callback_data=f"allow_{user_id}"),
+                InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")
+            ]]
+            warn_msg = await context.bot.send_message(
+                chat_id,
+                f"⚠️ {user.mention_html()}! Please remove links/usernames from your <b>Bio/About</b> section.\n"
+                f"<b>Warnings:</b> {warn_count}/{warn_limit}",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+            # Send warning message deletion job
+            context.job_queue.run_once(delete_msg_job, 10, chat_id=chat_id, data=warn_msg.message_id)
+
+        # Handler ko yahan stop karein taaki aage ka process na ho
+        raise ApplicationHandlerStop
+
+    else:
+        # Bio mein link NAHI HAI -> Violators set se hatao
+        if user_id in bio_violators:
+            bio_violators.remove(user_id)
+
+# ==========================================
 # LOCAL BLOCKLIST COMMANDS (GROUP ADMINS)
 # ==========================================
 
@@ -2752,7 +2727,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg_text and has_link(msg_text):
             violation, reason = True, "Link in Message"
 
-        # 2. BIO CHECK (Link)
+        # 2. BIO CHECK (Link + Contact)
         if not violation:
             try:
                 u_chat = await context.bot.get_chat(user.id)
@@ -2764,16 +2739,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if has_link(user_bio):
                     violation, reason = True, "Link in Bio"
                     db.update_stat('bio_caught')
-                    if not db.get_bio_violation(user.id):
-                        db.set_bio_violation(user.id, True)
-                else:
-                    # Bio exists but has no link – clear the violation flag
-                    if db.get_bio_violation(user.id):
-                        db.set_bio_violation(user.id, False)
-            else:
-                # Bio is empty – clear the violation flag
-                if db.get_bio_violation(user.id):
-                    db.set_bio_violation(user.id, False)
+                elif anti_contact_enabled and has_contact_info(user_bio):  # <-- NAYA BIO CHECK
+                    violation, reason = True, "Phone/Email in Bio"
+                    db.update_stat('bio_caught')
 
         # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
@@ -2995,6 +2963,13 @@ def main():
 
     # 👇 ADD THIS LINE RIGHT HERE (group=-1 makes it run before everything else)
     app_bot.add_handler(TypeHandler(Update, enforce_bot_admin_status), group=-1)
+    app_bot.add_handler(
+        MessageHandler(
+            filters.CHAT & (filters.TEXT | filters.COMMAND) & ~filters.StatusUpdate.ALL, 
+            check_user_bio_and_punish
+        ),
+        group=-1  # group=-1 rakhne se ye baki handlers se pehle run hota hai
+    )
     
     # ✅ FIX: All handlers now use app_bot instead of app
     app_bot.add_handler(CommandHandler("start", start_command))
@@ -3047,8 +3022,7 @@ def main():
 
     app_bot.add_handler(ChatMemberHandler(auto_reset_on_unmute, ChatMemberHandler.CHAT_MEMBER))
     app_bot.add_handler(ChatMemberHandler(track_bot_status, ChatMemberHandler.MY_CHAT_MEMBER))
-    # Group messages par sabse pehle bio check run hoga (group=-1 priority)
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & filters.ChatType.GROUPS, enforce_bio_link_policy), group=-1)
+
     # Bulk delete flusher – har 2 seconds mein queue process karega
     app_bot.job_queue.run_repeating(flush_bulk_deletes, interval=2, first=2)
     
