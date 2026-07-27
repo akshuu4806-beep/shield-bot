@@ -2495,6 +2495,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user = update.message.from_user
     chat_id = update.effective_chat.id
+    print(f"🔍 [DEBUG] Message from {user.id} in chat {chat_id}")
 
     # 👇 GBAN AUTO-KICK CHECK 👇
     is_gbanned, gban_reason = db.is_gbanned(user.id)
@@ -2530,11 +2531,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user:
         if user.id in ADMIN_IDS or db.is_allowed(user.id):
             is_exempt = True
+            print(f"✅ [DEBUG] User {user.id} is exempt (Admin or Allowlist)")
         else:
             try:
                 mem = await context.bot.get_chat_member(chat_id, user.id)
                 if mem.status in ['administrator', 'creator']:
                     is_exempt = True
+                    print(f"✅ [DEBUG] User {user.id} is group admin")
             except:
                 pass
 
@@ -2545,6 +2548,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not is_exempt or is_anonymous_channel_chat:
                 try:
                     await update.message.delete()
+                    print(f"🗑️ [DEBUG] Deleted channel post")
                     return
                 except Exception as e:
                     error_msg = str(e).lower()
@@ -2578,6 +2582,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
     msg_text = update.message.text or update.message.caption
+    print(f"📝 [DEBUG] Message text: {msg_text[:100] if msg_text else 'None'}")
 
     # ===================================================================
     # CUSTOM BLOCKLISTS (Words & Sticker Packs)
@@ -2601,9 +2606,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 blocked_sticker_found = True
 
         if blocked_word_found:
+            print(f"🚫 [DEBUG] Blocked word detected: {caught_word}")
             db.update_stat('abuse_caught')
             try:
                 await update.message.delete()
+                print(f"🗑️ [DEBUG] Message deleted (blocked word)")
             except Exception as e:
                 error_msg = str(e).lower()
                 if "can't be deleted" in error_msg or "not enough rights" in error_msg:
@@ -2627,9 +2634,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif blocked_sticker_found:
+            print(f"🚫 [DEBUG] Blocked sticker pack: {update.message.sticker.set_name}")
             db.update_stat('nsfw_blocked')
             try:
                 await update.message.delete()
+                print(f"🗑️ [DEBUG] Message deleted (blocked sticker)")
             except Exception as e:
                 error_msg = str(e).lower()
                 if "can't be deleted" in error_msg or "not enough rights" in error_msg:
@@ -2681,9 +2690,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(temp_file_path)
 
             if is_explicit:
+                print(f"🔞 [DEBUG] NSFW content detected")
                 db.update_stat('nsfw_blocked')
                 try:
                     await update.message.delete()
+                    print(f"🗑️ [DEBUG] Message deleted (NSFW)")
                 except Exception as e:
                     error_msg = str(e).lower()
                     if "can't be deleted" in error_msg or "not enough rights" in error_msg:
@@ -2717,44 +2728,53 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # VIOLATION CHECKS (Anti-Link, Bio Shield, Anti-Virus)
     # ===================================================================
     if not is_exempt:
-        violation, reason = False, ""
+        print(f"🔎 [DEBUG] User is NOT exempt – checking violations")
+        violation = False
+        reason = ""
 
         if msg_text and has_link(msg_text):
-            violation, reason = True, "Link in Message"
+            violation = True
+            reason = "Link in Message"
+            print(f"🚨 [DEBUG] Link detected in message: {msg_text[:50]}")
 
         if not violation:
             config = db.get_config(chat_id)
-            bio_check = config[7]      # 0 = OFF, 1 = ON
+            bio_check = config[7]
             bio_action = config[8]
 
-            # 🔹 BIO CHECK – ONLY RUNS IF bio_check IS 1 (ON)
             if bio_check:
                 try:
                     u_chat = await context.bot.get_chat(user.id)
                     user_bio = u_chat.bio
-                except Exception:
-                    user_bio = None
-
-                if user_bio and has_link(user_bio):
-                    violation = True
-                    reason = "Link in Bio"
-                    db.update_stat('bio_caught')
+                    print(f"👤 [DEBUG] User bio: {user_bio[:50] if user_bio else 'None'}")
+                    if user_bio and has_link(user_bio):
+                        violation = True
+                        reason = "Link in Bio"
+                        db.update_stat('bio_caught')
+                        print(f"🚨 [DEBUG] Link in bio detected")
+                except Exception as e:
+                    print(f"❌ [DEBUG] Could not fetch bio: {e}")
 
         if not violation and update.message.document:
             file_name = update.message.document.file_name
             if file_name:
                 ext = file_name.lower().split('.')[-1]
                 if ext in ['apk', 'exe', 'bat', 'scr', 'vbs', 'js', 'zip', 'bin']:
-                    violation, reason = True, f"Malicious File (.{ext})"
+                    violation = True
+                    reason = f"Malicious File (.{ext})"
+                    print(f"🚨 [DEBUG] Malicious file detected: {file_name}")
 
         # ===================================================================
-        # PUNISHMENT LOGIC – FULLY FIXED
+        # PUNISHMENT LOGIC
         # ===================================================================
         if violation:
+            print(f"⚡ [DEBUG] Violation confirmed: {reason}")
             db.update_stat('warnings_issued')
             try:
                 await update.message.delete()
+                print(f"🗑️ [DEBUG] Message deleted")
             except Exception as e:
+                print(f"❌ [DEBUG] Delete failed: {e}")
                 error_msg = str(e).lower()
                 if "can't be deleted" in error_msg or "not enough rights" in error_msg:
                     try:
@@ -2776,6 +2796,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             count = db.add_warning(user.id)
             safe_name = html.escape(user.full_name)
+            print(f"⚠️ [DEBUG] Action: {action}, Limit: {limit_to_use}, Count: {count}")
 
             if action == "warn":
                 # -------------------- WARNING MODE --------------------
@@ -2791,13 +2812,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 elif count == limit_to_use:
                     # ✅ Limit reached – apply the GENERAL action (mute/ban)
+                    print(f"✅ [DEBUG] Limit reached – applying {general_action}")
                     if general_action == "mute":
                         try:
                             await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
                             txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                             kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                             await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
-                        except Exception:
+                        except Exception as e:
+                            print(f"❌ [DEBUG] Mute failed: {e}")
                             await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
                             db.decrease_warning(user.id)
                     elif general_action == "ban":
@@ -2806,7 +2829,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                             kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                             await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
-                        except Exception:
+                        except Exception as e:
+                            print(f"❌ [DEBUG] Ban failed: {e}")
                             await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
                             db.decrease_warning(user.id)
                     return
@@ -2825,16 +2849,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
                                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                     await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+                    print(f"📨 [DEBUG] Warning notice sent")
 
             else:
                 # -------------------- DIRECT ACTION (MUTE / BAN) – NO WARNING --------------------
+                print(f"⚡ [DEBUG] Applying direct {action}")
                 if action == "mute":
                     try:
                         await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
                         txt = f"🔇 <b>User has been MUTED</b> (Bio Link)\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                         kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
-                    except Exception:
+                    except Exception as e:
+                        print(f"❌ [DEBUG] Mute failed: {e}")
                         await context.bot.send_message(chat_id, "🚨 **MUTE FAILED:** I need admin rights.", parse_mode='HTML')
                 elif action == "ban":
                     try:
@@ -2842,9 +2869,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         txt = f"🚫 <b>User has been BANNED</b> (Bio Link)\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                         kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
-                    except Exception:
+                    except Exception as e:
+                        print(f"❌ [DEBUG] Ban failed: {e}")
                         await context.bot.send_message(chat_id, "🚨 **BAN FAILED:** I need admin rights.", parse_mode='HTML')
-                        
+
+    else:
+        print(f"⏩ [DEBUG] User {user.id} is EXEMPT – skipping violation checks")
+        
                 
 # ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
