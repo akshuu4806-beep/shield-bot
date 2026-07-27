@@ -135,10 +135,34 @@ class PersistentDB:
         
     def get_config(self, chat_id):
         s = self.group_config.find_one({"_id": chat_id})
-        return (s.get("delay_minutes", 1), s.get("warn_limit", 3), s.get("action", "mute"), 
-                s.get("copyright_enabled", 0), s.get("anti_channel", 1), s.get("nsfw_enabled", 1),
-                s.get("anti_bot", 1)) if s else (1, 3, "mute", 0, 1, 1, 1)
+        if s:
+            return (
+                s.get("delay_minutes", 1),
+                s.get("warn_limit", 3),
+                s.get("action", "mute"),
+                s.get("copyright_enabled", 0),
+                s.get("anti_channel", 1),
+                s.get("nsfw_enabled", 1),
+                s.get("anti_bot", 1),
+                s.get("bio_check", 0),        # new field – default OFF
+                s.get("bio_action", "warn")   # new field – default 'warn'
+            )
+        return (1, 3, "mute", 0, 1, 1, 1, 0, "warn")
 
+    def set_bio_check(self, chat_id, enabled):
+        self.group_config.update_one(
+            {"_id": chat_id},
+            {"$set": {"bio_check": 1 if enabled else 0}},
+            upsert=True
+        )
+
+    def set_bio_action(self, chat_id, action):
+        if action in ['warn', 'mute', 'ban']:
+            self.group_config.update_one(
+                {"_id": chat_id},
+                {"$set": {"bio_action": action}},
+                upsert=True
+            )
     
     def set_anti_bot(self, chat_id, enabled):
         self.group_config.update_one({"_id": chat_id}, {"$set": {"anti_bot": 1 if enabled else 0}}, upsert=True)
@@ -595,43 +619,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 1. DELETE MESSAGES (Har koi use kar sakta hai)
     if "delete_msg" in query.data or "delmsg" in query.data:
-        try: 
+        try:
             await query.message.delete()
-        except Exception as e: 
+        except Exception as e:
             error_msg = str(e).lower()
             if "can't be deleted" in error_msg or "not enough rights" in error_msg:
                 await query.answer("⚠️ Please give me delete messages permission.", show_alert=True)
         return
-        
+
     # 2. HELP MENU (Button Click Logic)
     if query.data == "help_main":
         is_private = update.effective_chat.type == 'private'
-
         if is_private:
             help_text = (
-        "🤖 **BOT COMMANDS MENU**\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "👤 **USER COMMANDS**\n"
-        "• `/start` : Check bot status\n"
-        "• `/status` : Check security stats\n"
-        "• `/help` : Show this menu\n\n"
-        "🛡️ **ADMIN SECURITY**\n"
-        "• `/nsfw on/off` : AI Media Filter\n"
-        "• `/antichannel on/off` : Stop channel posts\n"
-        "• `/edit on/off` : Toggle edited messages\n" # <--- ADD THIS LINE        
-        "• `/config` : Set warn limits & actions\n"
-        "• `/delay <min>` : Media auto-delete timer\n\n"
-        "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
-        "• `/blockword` : Block a word locally\n"
-        "• `/unblockword` : Remove local word block\n"
-        "• `/blocksticker` : Block sticker pack locally\n"
-        "• `/unblocksticker` : Unblock pack locally\n"
-        "• `/listlocal` : View local blocked list\n\n"
-        "👥 **USER MANAGEMENT**\n"
-        "• `/allow` : Whitelist a user\n"
-        "• `/unallow` : Remove from whitelist\n"
-        "• `/allowlist` : List whitelist users\n"
-    )
+                "🤖 **BOT COMMANDS MENU**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "👤 **USER COMMANDS**\n"
+                "• `/start` : Check bot status\n"
+                "• `/status` : Check security stats\n"
+                "• `/help` : Show this menu\n\n"
+                "🛡️ **ADMIN SECURITY**\n"
+                "• `/nsfw on/off` : AI Media Filter\n"
+                "• `/antichannel on/off` : Stop channel posts\n"
+                "• `/edit on/off` : Toggle edited messages\n"
+                "• `/config` : Set warn limits & actions\n"
+                "• `/delay <min>` : Media auto-delete timer\n\n"
+                "🚫 **LOCAL BLOCKLIST (Group Admins)**\n"
+                "• `/blockword` : Block a word locally\n"
+                "• `/unblockword` : Remove local word block\n"
+                "• `/blocksticker` : Block sticker pack locally\n"
+                "• `/unblocksticker` : Unblock pack locally\n"
+                "• `/listlocal` : View local blocked list\n\n"
+                "👥 **USER MANAGEMENT**\n"
+                "• `/allow` : Whitelist a user\n"
+                "• `/unallow` : Remove from whitelist\n"
+                "• `/allowlist` : List whitelist users\n"
+            )
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
             await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         else:
@@ -644,27 +667,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("⬅️ Back", callback_data="back_to_start"), InlineKeyboardButton("🗑 Close", callback_data="delete_msg")]
             ]
             await query.edit_message_text(group_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        try: await query.answer()
-        except: pass
-        return
-        
-    elif query.data == "back_to_start":
-        await start_command(update, context)
-        try: await query.answer()
-        except: pass
+        try:
+            await query.answer()
+        except:
+            pass
         return
 
-    # 👇 YAHAN PAR ADD KARNA HAI 👇
+    elif query.data == "back_to_start":
+        await start_command(update, context)
+        try:
+            await query.answer()
+        except:
+            pass
+        return
+
     # ==========================================
     # 👑 OWNER & SUDO LOCKED MENU
     # ==========================================
     if query.data == "sudo_menu":
-        # Security Check: Agar user Owner ya Sudo nahi hai, toh popup alert dedo
         if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
             await query.answer("❌ ACCESS DENIED!\n\nThis menu is locked. Only the Bot Owner and Sudo Admins can open it.", show_alert=True)
             return
-            
-        # Agar Owner/Sudo hai, toh commands ki list dikhao
         sudo_text = (
             "👑 **OWNER & SUDO COMMANDS**\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -688,28 +711,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/gbanlist` : List of gban user\n"
         )
         keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
-        
         await query.edit_message_text(sudo_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        try: await query.answer()
-        except: pass
+        try:
+            await query.answer()
+        except:
+            pass
         return
-    # 👆 YAHAN TAK 👆
 
     # Anti-Bot Toggle Button (accessible only to admins)
     if query.data == "antibot_toggle":
-        # Check admin rights
         is_private = update.effective_chat.type == 'private'
         is_admin = is_private or await is_user_admin(update, context)
         if not is_admin:
             await query.answer("❌ You are not an administrator", show_alert=True)
             return
-
         chat_id = update.effective_chat.id
         config = db.get_config(chat_id)
         current = config[6] if len(config) > 6 else 1
         new_state = not current
         db.set_anti_bot(chat_id, new_state)
-
         status = "ENABLED ✅" if new_state else "DISABLED ❌"
         text = (
             f"🤖 **Anti‑Bot Configuration**\n\n"
@@ -725,7 +745,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         await query.answer()
         return
-    
+
     # ==========================================
     # 🔴 RESTRICTED BUTTONS (ADMINS ONLY)
     # ==========================================
@@ -737,119 +757,156 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # --- CONFIGURATION LOGIC (INSTANT TICK) ---
+    # यहाँ से पूरा cfg_ ब्लॉक सही इंडेंटेशन के साथ
     if query.data.startswith("cfg_") or query.data.startswith("setwarn_"):
-        config = db.get_config(chat_id)
-        warn_limit, action = config[1], config[2]
-        
-        # 0. Database se current status check kiya
-        edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
-
-        # 1. Action: Warn Limit Change
-        if query.data.startswith("setwarn_"):
-            limit = int(query.data.split("_")[1])
-            if limit == warn_limit:
-                return await query.answer("✅ Already selected!", show_alert=False)
-            db.set_warn_limit(chat_id, limit)
-            warn_limit = limit 
-            await query.answer(f"✅ Warning limit changed to {limit}")
-
-        # 2. Action: Mute/Ban Change
-        elif query.data in ["cfg_mute", "cfg_ban"]:
-            new_action = query.data.split("_")[1]
-            if new_action == action:
-                return await query.answer("✅ Already selected!", show_alert=False)
-            db.set_action(chat_id, new_action)
-            action = new_action 
-            await query.answer(f"✅ Punishment set to {action.upper()}")
-
-        # 3. Action: Edit Guard Toggle
-        elif query.data == "cfg_edit":
-            edit_guard_enabled = not edit_guard_enabled # Toggle
+        # हम सिर्फ cfg_edit, cfg_bio, cfg_main, और bio_* handle करेंगे
+        if query.data == "cfg_edit":
+            edit_guard_enabled = not db.is_edit_guard_enabled(chat_id)
             db.set_edit_guard(chat_id, edit_guard_enabled)
             await query.answer(f"✅ Edit Guard turned {'ON' if edit_guard_enabled else 'OFF'}")
-
-        # 4. Menu: Render Warn Limits Page (Dusre page par jana)
-        elif query.data == "cfg_warn":
-            def get_btn(num):
-                txt = f"✅ {num}" if num == warn_limit else str(num)
-                return InlineKeyboardButton(txt, callback_data=f"setwarn_{num}")
-            
-            keyboard = [
-                [get_btn(3), get_btn(4), get_btn(5), get_btn(6)],
-                [get_btn(7), get_btn(8), get_btn(9), get_btn(10)],
-                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
-            ]
-            try: 
-                await query.edit_message_text("⚠️ **Select Warning Limit:**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            except Exception: pass
-            return
-
-        # 5. Back to main config menu
-        elif query.data == "cfg_main":
-            # Re‑render the main config menu
+            # rebuild main config
             config = db.get_config(chat_id)
-            warn_limit = config[1]
-            action = config[2]
             edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
             edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
             edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-            mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-            ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+            bio_status = "ON ✅" if bio_check else "OFF ❌"
+            bio_action_display = bio_action.upper()
+            bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"
             text = (
-                f"⚙️ **Group Configuration**\n\n"
-                f"⚠️ **Limit:** {warn_limit}\n"
-                f"🔨 **Action:** {action.upper()}\n"
-                f"✏️ **Edit Guard:** {edit_status}"
+                "⚙️ **Group Configuration**\n\n"
+                f"✏️ **Edit Guard:** {edit_status}\n"
+                f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"
             )
             keyboard = [
-                [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-                [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
                 [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+                [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],
+                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return
+
+        elif query.data == "cfg_bio":
+            # Bio Check sub‑menu
+            config = db.get_config(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
+            status = "ON ✅" if bio_check else "OFF ❌"
+            warn_btn = "✅ Warn" if bio_action == "warn" else "Warn"
+            mute_btn = "✅ Mute" if bio_action == "mute" else "Mute"
+            ban_btn = "✅ Ban" if bio_action == "ban" else "Ban"
+            text = (
+                "🧬 **Bio Check Configuration**\n\n"
+                f"🔹 **Status:** {status}\n"
+                f"🔹 **Action on violation:** {bio_action.upper()}\n\n"
+                "When enabled, the bot will scan members' bios for links.\n"
+                "Select the punishment for violators:"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"Toggle {status}", callback_data="bio_toggle")],
+                [InlineKeyboardButton(warn_btn, callback_data="bio_warn"), InlineKeyboardButton(mute_btn, callback_data="bio_mute"), InlineKeyboardButton(ban_btn, callback_data="bio_ban")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await query.answer()
+            return
+
+        elif query.data == "bio_toggle":
+            config = db.get_config(chat_id)
+            current = config[7]
+            new_state = not current
+            db.set_bio_check(chat_id, new_state)
+            await query.answer(f"Bio Check is now {'ON' if new_state else 'OFF'}")
+            # rebuild bio sub‑menu
+            config = db.get_config(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
+            status = "ON ✅" if bio_check else "OFF ❌"
+            warn_btn = "✅ Warn" if bio_action == "warn" else "Warn"
+            mute_btn = "✅ Mute" if bio_action == "mute" else "Mute"
+            ban_btn = "✅ Ban" if bio_action == "ban" else "Ban"
+            text = (
+                "🧬 **Bio Check Configuration**\n\n"
+                f"🔹 **Status:** {status}\n"
+                f"🔹 **Action on violation:** {bio_action.upper()}\n\n"
+                "When enabled, the bot will scan members' bios for links.\n"
+                "Select the punishment for violators:"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"Toggle {status}", callback_data="bio_toggle")],
+                [InlineKeyboardButton(warn_btn, callback_data="bio_warn"), InlineKeyboardButton(mute_btn, callback_data="bio_mute"), InlineKeyboardButton(ban_btn, callback_data="bio_ban")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return
+
+        elif query.data in ["bio_warn", "bio_mute", "bio_ban"]:
+            action = query.data.split("_")[1]   # 'warn', 'mute', 'ban'
+            db.set_bio_action(chat_id, action)
+            await query.answer(f"Bio action set to {action.upper()}")
+            # rebuild bio sub‑menu
+            config = db.get_config(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
+            status = "ON ✅" if bio_check else "OFF ❌"
+            warn_btn = "✅ Warn" if bio_action == "warn" else "Warn"
+            mute_btn = "✅ Mute" if bio_action == "mute" else "Mute"
+            ban_btn = "✅ Ban" if bio_action == "ban" else "Ban"
+            text = (
+                "🧬 **Bio Check Configuration**\n\n"
+                f"🔹 **Status:** {status}\n"
+                f"🔹 **Action on violation:** {bio_action.upper()}\n\n"
+                "When enabled, the bot will scan members' bios for links.\n"
+                "Select the punishment for violators:"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"Toggle {status}", callback_data="bio_toggle")],
+                [InlineKeyboardButton(warn_btn, callback_data="bio_warn"), InlineKeyboardButton(mute_btn, callback_data="bio_mute"), InlineKeyboardButton(ban_btn, callback_data="bio_ban")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="cfg_main")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return
+
+        elif query.data == "cfg_main":
+            # back to main config
+            config = db.get_config(chat_id)
+            edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
+            edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
+            edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
+            bio_status = "ON ✅" if bio_check else "OFF ❌"
+            bio_action_display = bio_action.upper()
+            bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"
+            text = (
+                "⚙️ **Group Configuration**\n\n"
+                f"✏️ **Edit Guard:** {edit_status}\n"
+                f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"
+            )
+            keyboard = [
+                [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+                [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],
                 [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             await query.answer()
             return
-        
-        # ==========================================
-        # 5. UI REFRESHER (Sab kuch yahan update hoga instantly!)
-        # ==========================================
-        mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-        ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
-        
-        edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
-        edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-        
-        text = (
-            f"⚙️ **Group Configuration**\n\n"
-            f"⚠️ **Limit:** {warn_limit}\n"
-            f"🔨 **Action:** {action.upper()}\n"
-            f"✏️ **Edit Guard:** {edit_status}"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-            [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-            [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
-            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
-        ]
-        
-        # Pura message naye buttons ke sath recreate kar diya
-        try: 
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception: 
-            pass 
-            
-        return
+
+        # बाकी सारे cfg_* या setwarn_* को हम इग्नोर कर देंगे
+        # (क्योंकि main config में वे बटन नहीं हैं)
+        # इसलिए यहाँ कुछ न करें
 
     # --- OTHER ADMIN BUTTONS (allow, Unban, Unmute) ---
-    try: await query.answer() 
-    except: pass
-    
+    try:
+        await query.answer()
+    except:
+        pass
+
     if "_" in query.data:
         parts = query.data.split("_")
         action = parts[0]
-        
+
         if len(parts) > 1 and parts[-1].lstrip('-').isdigit():
             target_id = int(parts[-1])
 
@@ -871,30 +928,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif action in ["unwarn", "cancle warning"]:
                 db.reset_warnings(target_id)
                 await context.bot.send_message(chat_id, f"🧹 **Warnings Cleared:** User `{target_id}` is now warning-free.", parse_mode='Markdown')
-            
+
             elif action == "unban":
-                # 1. First, try to unban the user
                 try:
                     await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
                     db.reset_warnings(target_id)
                 except Exception as e:
-                    # If the bot lacks permissions or the unban fails, send the error and stop
                     await context.bot.send_message(chat_id, "❌ Failed to unban. Make sure I am an admin.")
                     return
-
-                # 2. If the unban is successful, update the button message
                 try:
                     await query.edit_message_text(f"🔓 User `{target_id}` has been Unbanned. Warnings restarted!", parse_mode='Markdown')
                 except Exception:
-                    # Ignore minor errors like "Message is not modified" from double clicks
                     pass
-                    
+
             elif action == "unmute":
-                # 1. Pehle sirf user ko unmute karne ka try karenge
                 try:
                     await context.bot.restrict_chat_member(
-                        chat_id=chat_id, 
-                        user_id=target_id, 
+                        chat_id=chat_id,
+                        user_id=target_id,
                         permissions=ChatPermissions(
                             can_send_messages=True,
                             can_send_other_messages=True,
@@ -904,43 +955,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     db.reset_warnings(target_id)
                 except Exception as e:
-                    # Agar restrict FAILED hua (jaise admin rights nahi hain), tabhi ye message aayega
                     await context.bot.send_message(chat_id, f"❌ **Error:** Could not unmute. Please check my admin permissions.", parse_mode='Markdown')
-                    return # Code yahan se ruk jayega
-
-                # 2. Agar unmute SUCCESSFUL ho gaya, tab message ko edit karenge
+                    return
                 try:
                     await query.edit_message_text(text=f"✅ User `{target_id}` has been **Unmuted**.", parse_mode='Markdown')
-                    # Note: Maine yahan se ek extra send_message hata diya hai, 
-                    # kyunki aapka 'auto_reset_on_unmute' function pehle se hi group mein 
-                    # "🔄 User has been unmuted" ka alert bhej raha hai. 
-                    # Isse bot spam nahi karega.
                 except Exception:
-                    # Agar user button par 2 baar click kar de, toh ye minor error ko chup chap ignore karega
                     pass
-            
-async def auto_reset_on_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.chat_member:
-        return
-
-    old = update.chat_member.old_chat_member
-    new = update.chat_member.new_chat_member
-
-    # Pehle restricted tha (muted)
-    if old.status == "restricted" and not old.can_send_messages:
-
-        # Ab normal member ho gaya (unmuted)
-        if new.status in ("member", "administrator", "creator") or \
-           (new.status == "restricted" and new.can_send_messages):
-
-            user_id = new.user.id
-            db.reset_warnings(user_id)
-
-            await context.bot.send_message(
-                update.effective_chat.id,
-                f"🔄 {new.user.mention_html()} has been unmuted.",
-                parse_mode="HTML"
-            )
 
 # ========== COMMANDS ==========
 
@@ -1130,45 +1150,39 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
     
 async def set_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ GROUP-ONLY CHECK
     if update.effective_chat.type == 'private':
         await update.message.reply_text("❌ This command only works in groups.")
         return
-    
-    if not await is_user_admin(update, context): 
-        msg = await update.message.reply_text("❌ You have not permission.")
-        # Make sure you have delete_after_delay defined, or remove this task
-        
+    if not await is_user_admin(update, context):
+        await update.message.reply_text("❌ You have not permission.")
         return
-        
+
     chat_id = update.effective_chat.id
     config = db.get_config(chat_id)
-    warn_limit = config[1]
-    action = config[2]
-
-    # 👇 Fetch Edit Guard status
     edit_guard_enabled = db.is_edit_guard_enabled(chat_id)
+    bio_check = config[7]
+    bio_action = config[8]
+
     edit_status = "ON ✅" if edit_guard_enabled else "OFF ❌"
     edit_btn = "✅ ✏️ Edit Guard" if edit_guard_enabled else "❌ ✏️ Edit Guard"
-
-    mute_btn = "✅ 🔇 Mute" if action == "mute" else "🔇 Mute"
-    ban_btn = "✅ 🚫 Ban" if action == "ban" else "🚫 Ban"
+    bio_status = "ON ✅" if bio_check else "OFF ❌"
+    bio_action_display = bio_action.upper()
+    bio_btn = f"🧬 Bio Check: {bio_status} ({bio_action_display})"
 
     text = (
         "⚙️ **Group Configuration**\n\n"
-        f"⚠️ **Current Warn Limit:** {warn_limit}\n"
-        f"🔨 **Current Action:** {action.upper()}\n"
-        f"✏️ **Edit Guard:** {edit_status}" # <--- Shows status in text
+        f"✏️ **Edit Guard:** {edit_status}\n"
+        f"🧬 **Bio Check:** {bio_status} → {bio_action_display}"
     )
 
     keyboard = [
-        [InlineKeyboardButton(f"⚠️ Warn ({warn_limit})", callback_data="cfg_warn")],
-        [InlineKeyboardButton(mute_btn, callback_data="cfg_mute"), InlineKeyboardButton(ban_btn, callback_data="cfg_ban")],
-        [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")], # <--- The new toggle button
+        [InlineKeyboardButton(edit_btn, callback_data="cfg_edit")],
+        [InlineKeyboardButton(bio_btn, callback_data="cfg_bio")],
         [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]
     ]
 
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
     
 async def set_delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ GROUP-ONLY CHECK
@@ -2381,7 +2395,8 @@ async def edited_message_handler(update: Update, context: ContextTypes.DEFAULT_T
         pass
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
+    if not update.message:
+        return
     user = update.message.from_user
     chat_id = update.effective_chat.id
 
@@ -2389,37 +2404,32 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_gbanned, gban_reason = db.is_gbanned(user.id)
     if is_gbanned:
         try:
-            await update.message.delete() # Unka message uda do
-            await context.bot.ban_chat_member(chat_id, user.id) # Unko group se ban kar do
+            await update.message.delete()
+            await context.bot.ban_chat_member(chat_id, user.id)
         except:
             pass
-        return # Code aage run hone se rok do
-    # 👆 GBAN CHECK END 👆
-    
+        return
+
     # UPDATE SCANNED STAT
     db.update_stat('scanned')
 
     # 1. Identify Channel Posts (BULLETPROOF VERSION)
     is_channel_post = False
-    
-    # Case A: Forwarded from a channel (Naye aur Purane dono PTB versions ke liye)
+
     if getattr(update.message, 'forward_origin', None):
         if update.message.forward_origin.type == 'channel':
             is_channel_post = True
-    elif getattr(update.message, 'forward_from_chat', None):  
+    elif getattr(update.message, 'forward_from_chat', None):
         if update.message.forward_from_chat.type == 'channel':
             is_channel_post = True
 
-    # Case B: Send as Channel (Jab log Group mein Channel ban kar chat karte hain)
     if getattr(update.message, 'sender_chat', None) and update.message.sender_chat.type == 'channel':
         if not getattr(update.message, 'is_automatic_forward', False):
             is_channel_post = True
 
-    # Get config
     config = db.get_config(chat_id)
     anti_channel_enabled = config[4] if len(config) > 4 else 1
 
-    # Determine if user is Admin or allowd
     is_exempt = False
     if user:
         if user.id in ADMIN_IDS or db.is_allowed(user.id):
@@ -2429,54 +2439,50 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mem = await context.bot.get_chat_member(chat_id, user.id)
                 if mem.status in ['administrator', 'creator']:
                     is_exempt = True
-            except: pass
+            except:
+                pass
 
     # ANTI-CHANNEL LOGIC
     if is_channel_post:
         if anti_channel_enabled:
-            # Agar log 'Send As Channel' use karte hain, toh unhe delete karo (Even Admins!)
-            # Par agar admin normal forward kar raha hai, toh allow karo (is_exempt kaam aayega)
             is_anonymous_channel_chat = getattr(update.message, 'sender_chat', None) is not None
-            
             if not is_exempt or is_anonymous_channel_chat:
                 try:
                     await update.message.delete()
-                    return # Stop execution here
-                except Exception as e: 
+                    return
+                except Exception as e:
                     error_msg = str(e).lower()
                     if "can't be deleted" in error_msg or "not enough rights" in error_msg:
                         try:
                             await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
-                        except: pass
-                    return # Stop execution even if delete fails
+                        except:
+                            pass
+                    return
         else:
-            # 💡 MAIN FIX: If OFF, bypass all other strict filters (Link/Virus) for this channel post!
             is_exempt = True
-            
 
     # 2. Private / Group Logic
     if update.effective_chat.type == 'private':
-        if user: db.add_user(user)
+        if user:
+            db.add_user(user)
         return
 
-    # ---> IGNORE JOIN/LEFT MESSAGES <---
     if update.message.new_chat_members or update.message.left_chat_member:
         return
-    
+
     db.add_group(chat_id, update.effective_chat.title)
-    # 'mute_hrs' ki jagah ab 'action' fetch kar rahe hain
     delay_min, warn_limit, action, _, anti_ch, nsfw_enabled, anti_bot_enabled = db.get_config(chat_id)
-    
-    # Media Logic (Applies to everyone)
-    is_media = any([update.message.photo, update.message.video, update.message.document, 
+
+    is_media = any([update.message.photo, update.message.video, update.message.document,
                     update.message.animation, update.message.voice, update.message.sticker])
     if is_media:
         db.update_stat('media_deleted')
         context.job_queue.run_once(delete_msg_job, delay_min * 60, chat_id=chat_id, data=update.message.message_id)
 
-    if not user: return 
+    if not user:
+        return
     msg_text = update.message.text or update.message.caption
-    
+
     # ===================================================================
     # CUSTOM BLOCKLISTS (Words & Sticker Packs)
     # ===================================================================
@@ -2484,23 +2490,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         blocked_word_found = False
         blocked_sticker_found = False
         caught_word = ""
-    
-        # 1. Check Custom Words
+
         if msg_text:
             all_blocked_words = db.get_blocked_words() + db.get_local_words(chat_id)
             for word in all_blocked_words:
                 if re.search(r'\b' + re.escape(word) + r'\b', msg_text.lower()):
                     blocked_word_found = True
-                    caught_word = word  
+                    caught_word = word
                     break
-    
-        # 2. Check Custom Sticker Packs
+
         if not blocked_word_found and update.message.sticker and update.message.sticker.set_name:
             all_blocked_stickers = db.get_blocked_stickers() + db.get_local_stickers(chat_id)
             if update.message.sticker.set_name in all_blocked_stickers:
                 blocked_sticker_found = True
-    
-        # 🟢 CASE A: BLOCKED WORD
+
         if blocked_word_found:
             db.update_stat('abuse_caught')
             try:
@@ -2512,21 +2515,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-        
+
             current_time = time.time()
             if current_time - context.chat_data.get(f"last_word_alert_{user.id}", 0) > 10:
                 context.chat_data[f"last_word_alert_{user.id}"] = current_time
                 try:
                     alert_msg = await context.bot.send_message(
-                        chat_id=chat_id, 
-                        text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>", 
+                        chat_id=chat_id,
+                        text=f"🚫 {user.mention_html()}, blocked word: <b>{html.escape(caught_word)}</b>",
                         parse_mode='HTML'
                     )
                     context.job_queue.run_once(delete_msg_job, 3, chat_id=chat_id, data=alert_msg.message_id)
-                except Exception: pass
+                except Exception:
+                    pass
             return
-    
-        # 🔴 CASE B: BLOCKED STICKER
+
         elif blocked_sticker_found:
             db.update_stat('nsfw_blocked')
             try:
@@ -2538,7 +2541,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-        
+
             current_time = time.time()
             if current_time - context.chat_data.get(f"last_sticker_alert_{user.id}", 0) > 10:
                 context.chat_data[f"last_sticker_alert_{user.id}"] = current_time
@@ -2547,7 +2550,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     alert_msg = await context.bot.send_message(chat_id=chat_id, text=admin_alert, parse_mode='HTML', disable_notification=True)
                     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=alert_msg.message_id)
-                except Exception: pass
+                except Exception:
+                    pass
             return
 
     # ===================================================================
@@ -2576,10 +2580,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await context.bot.get_file(file_id)
             await file.download_to_drive(temp_file_path)
             is_explicit = await check_image_nsfw_api(temp_file_path)
-        
+
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-        
+
             if is_explicit:
                 db.update_stat('nsfw_blocked')
                 try:
@@ -2591,7 +2595,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                         except:
                             pass
-            
+
                 current_time = time.time()
                 if current_time - context.chat_data.get(f"last_nsfw_alert_{user.id}", 0) > 10:
                     context.chat_data[f"last_nsfw_alert_{user.id}"] = current_time
@@ -2599,10 +2603,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     admin_alert = f"🚨 <b>NSFW Content Detected</b>\n\n👤 <b>Sender:</b> {user.mention_html()}{admin_tags}"
                     try:
                         nsfw_alert_msg = await context.bot.send_message(
-                            chat_id=chat_id, 
-                            text=admin_alert, 
-                            parse_mode='HTML', 
-                            disable_notification=True 
+                            chat_id=chat_id,
+                            text=admin_alert,
+                            parse_mode='HTML',
+                            disable_notification=True
                         )
                         context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=nsfw_alert_msg.message_id)
                     except Exception as e:
@@ -2612,48 +2616,46 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Universal NSFW Processing Error: {e}")
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            
+
     # ===================================================================
-    # VIOLATION CHECKS (Anti-Link, Bio Shield, Anti-Virus, Anti-Contact)
+    # VIOLATION CHECKS (Anti-Link, Bio Shield, Anti-Virus)
     # ===================================================================
-    # Only proceed if User is NOT exempt
     if not is_exempt:
         violation, reason = False, ""
-        
-        # 1. ANTI-LINK (Message)
+
         if msg_text and has_link(msg_text):
             violation, reason = True, "Link in Message"
 
-        # 2. BIO CHECK (Link + Contact)
         if not violation:
-            try:
-                u_chat = await context.bot.get_chat(user.id)
-                user_bio = u_chat.bio
-            except Exception:
-                user_bio = None
+            config = db.get_config(chat_id)
+            bio_check = config[7]
+            bio_action = config[8]
 
-            if user_bio:
-                if has_link(user_bio):
-                    violation, reason = True, "Link in Bio"
-                    db.update_stat('bio_caught')
-                elif anti_contact_enabled and has_contact_info(user_bio):  # <-- NAYA BIO CHECK
-                    violation, reason = True, "Phone/Email in Bio"
+            if bio_check:
+                try:
+                    u_chat = await context.bot.get_chat(user.id)
+                    user_bio = u_chat.bio
+                except Exception:
+                    user_bio = None
+
+                if user_bio and has_link(user_bio):
+                    violation = True
+                    reason = "Link in Bio"
                     db.update_stat('bio_caught')
 
-        # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
             file_name = update.message.document.file_name
             if file_name:
                 ext = file_name.lower().split('.')[-1]
                 if ext in ['apk', 'exe', 'bat', 'scr', 'vbs', 'js', 'zip', 'bin']:
                     violation, reason = True, f"Malicious File (.{ext})"
-    
+
         # ===================================================================
         # PUNISHMENT LOGIC
         # ===================================================================
         if violation:
             db.update_stat('warnings_issued')
-            try: 
+            try:
                 await update.message.delete()
             except Exception as e:
                 error_msg = str(e).lower()
@@ -2662,74 +2664,86 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-            
+
+            # Determine which action to use
+            if reason == "Link in Bio":
+                config = db.get_config(chat_id)
+                action = config[8]   # bio_action
+            else:
+                config = db.get_config(chat_id)
+                action = config[2]   # default action (mute/ban)
+
             count = db.add_warning(user.id)
-            warn_limit, action = config[1], config[2]
+            warn_limit = config[1]
             safe_name = html.escape(user.full_name)
 
-
-            # CASE 1: Already over limit (should not happen normally)
-            if count > warn_limit:
-                if action == "mute":
-                    msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
-                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
-                elif action == "ban":
-                    msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already banned.</b>", parse_mode='HTML')
-                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
-                return
-
-            # CASE 2: Exactly reached limit → Mute/Ban
-            elif count == warn_limit:
+            if action == "warn":
+                # Normal warning logic
+                if count > warn_limit:
+                    # Already over limit – this shouldn't happen normally
+                    if action == "mute":
+                        msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
+                        context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
+                    elif action == "ban":
+                        msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already banned.</b>", parse_mode='HTML')
+                        context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
+                    return
+                elif count == warn_limit:
+                    # reached limit – apply default action (mute/ban) from config
+                    default_action = db.get_config(chat_id)[2]
+                    if default_action == "mute":
+                        try:
+                            await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
+                            txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
+                            kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                            await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+                        except Exception:
+                            await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
+                            db.decrease_warning(user.id)
+                    elif default_action == "ban":
+                        try:
+                            await context.bot.ban_chat_member(chat_id, user.id)
+                            txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
+                            kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                            await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+                        except Exception:
+                            await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
+                            db.decrease_warning(user.id)
+                    return
+                else:
+                    # Normal warning (below limit)
+                    base_info_text = (
+                        f"👤 <b>User:</b> {user.mention_html()}\n"
+                        f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+                        f"🚫 <b>Reason:</b> {reason}\n"
+                        f"⚠️ <b>Warnings:</b> {count}/{warn_limit}"
+                    )
+                    notice_text = "\n\n⚠️ **Link detected in your bio.**\nPlease remove it immediately.\nRepeated violations will lead to mute/ban." if reason == "Link in Bio" else ""
+                    is_app = db.is_allowed(user.id)
+                    app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
+                    keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
+                                [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                    await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                # action is 'mute' or 'ban' – apply directly (no warning count)
                 if action == "mute":
                     try:
                         await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
-                        txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
+                        txt = f"🔇 <b>User has been MUTED</b> (Bio Link)\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                         kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}")], [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
-                        db.decrease_warning(user.id)
+                        await context.bot.send_message(chat_id, "🚨 **MUTE FAILED:** I need admin rights.", parse_mode='HTML')
                 elif action == "ban":
                     try:
                         await context.bot.ban_chat_member(chat_id, user.id)
-                        txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
+                        txt = f"🚫 <b>User has been BANNED</b> (Bio Link)\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
                         kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
-                        db.decrease_warning(user.id)
-                return
-
-            # CASE 3: Normal warning (below limit)
-            else:
-                base_info_text = (
-                    f"👤 <b>User:</b> {user.mention_html()}\n"
-                    f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
-                    f"🚫 <b>Reason:</b> {reason}\n"
-                    f"⚠️ <b>Warnings:</b> {count}/{warn_limit}"
-                )
-
-                # Reason-specific notice
-                if reason == "Link in Bio":
-                    notice_text = (
-                        "\n\n⚠️ **Link detected in your bio.**\n"
-                        "Please remove all links from your bio immediately.\n"
-                        "Repeated violations will lead to mute/ban."
-                    )
-                elif reason == "Link in Message":
-                    notice_text = (
-                        "\n\n⚠️ **Links are not allowed in messages.**\n"
-                        "Repeated violations will lead to mute/ban."
-                    )
-                else:
-                    notice_text = ""
-
-                is_app = db.is_allowed(user.id)
-                app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
-                keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
-                            [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
-                await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
-        
+                        await context.bot.send_message(chat_id, "🚨 **BAN FAILED:** I need admin rights.", parse_mode='HTML')
+                
+                
 # ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members: return
@@ -2921,4 +2935,11 @@ def main():
 
 if __name__ == '__main__':
     keep_alive() # Flask server starts in background
-    main() # Telegram bot starts
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print("❌ BOT CRASHED:")
+        traceback.print_exc()
+
+    
