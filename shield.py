@@ -2964,34 +2964,31 @@ async def track_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== ADMIN CHECK MIDDLEWARE ==========
 async def enforce_bot_admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # 1. Apply rule ONLY for groups and supergroups (DMs work normally)
         if not update.effective_chat or update.effective_chat.type not in ['group', 'supergroup']:
             return
-
-        # 2. ALWAYS process 'my_chat_member' updates so the bot knows when it is promoted/demoted
         if update.my_chat_member:
             return
 
         chat_id = update.effective_chat.id
-
-        # 3. Check cached admin status to avoid Telegram API Rate Limits
         is_admin = context.chat_data.get('is_bot_admin')
+        print(f"🔍 [MIDDLEWARE] is_admin cache: {is_admin}")
 
-        # 4. If cache is empty (e.g., bot just restarted), do one API call and save it
         if is_admin is None:
-            try:
-                bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
-                is_admin = bot_member.status in ['administrator', 'creator']
-                context.chat_data['is_bot_admin'] = is_admin
-            except Exception:
-                is_admin = False  # Assume not admin if there's an API error
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            is_admin = bot_member.status in ['administrator', 'creator']
+            context.chat_data['is_bot_admin'] = is_admin
+            print(f"🔍 [MIDDLEWARE] Updated is_admin: {is_admin}")
 
-        # 5. If bot is an admin, exit middleware and allow normal processing
         if is_admin:
             return
-
-        # 6. ❌ Bot is NOT an admin. Block ALL commands, messages, and buttons silently.
+        print(f"🚫 [MIDDLEWARE] Bot NOT admin, blocking update")
         raise ApplicationHandlerStop()
+    except ApplicationHandlerStop:
+        raise
+    except Exception as e:
+        print(f"❌ [MIDDLEWARE] Error: {e}")
+        raise ApplicationHandlerStop()
+        
 
     except ApplicationHandlerStop:
         raise  # This tells the Python-Telegram-Bot application to halt the update completely
