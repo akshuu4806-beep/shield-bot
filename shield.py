@@ -264,22 +264,30 @@ class PersistentDB:
     def get_sudos(self):
         return [u["_id"] for u in self.sudos.find()]
 
-    def reset_warnings(self, user_id):
-        self.warnings.delete_one({"_id": user_id})
-    def add_warning(self, user_id):
-        w = self.warnings.find_one_and_update({"_id": user_id}, {"$inc": {"count": 1}}, upsert=True, return_document=pymongo.ReturnDocument.AFTER)
+    def add_warning(self, chat_id, user_id):
+        key = f"{chat_id}_{user_id}"
+        w = self.warnings.find_one_and_update(
+            {"_id": key},
+            {"$inc": {"count": 1}, "$set": {"chat_id": chat_id, "user_id": user_id}},
+            upsert=True,
+            return_document=pymongo.ReturnDocument.AFTER
+        )
         return w["count"]
 
-    def decrease_warning(self, user_id):
-        # Ye function warning count ko 1 kam karega
-        row = self.warnings.find_one({"_id": user_id})
+    def reset_warnings(self, chat_id, user_id):
+        key = f"{chat_id}_{user_id}"
+        self.warnings.delete_one({"_id": key})
+
+    def decrease_warning(self, chat_id, user_id):
+        key = f"{chat_id}_{user_id}"
+        row = self.warnings.find_one({"_id": key})
         if row and row["count"] > 0:
             new_count = row["count"] - 1
             if new_count <= 0:
-                self.warnings.delete_one({"_id": user_id})
+                self.warnings.delete_one({"_id": key})
             else:
-                self.warnings.update_one({"_id": user_id}, {"$set": {"count": new_count}})
-
+                self.warnings.update_one({"_id": key}, {"$set": {"count": new_count}})
+                
     def set_edit_guard(self, chat_id, enabled):
         self.group_config.update_one({"_id": chat_id}, {"$set": {"edit_guard": 1 if enabled else 0}}, upsert=True)
 
@@ -526,7 +534,7 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     db.add_to_allowlist(target_id)
-    db.reset_warnings(target_id)
+    db.reset_warnings(update.effective_chat.id, target_id)
     safe_name = target_name or str(target_id)
     await update.message.reply_text(f"✅ **{safe_name}** (`{target_id}`) has been whitelisted.", parse_mode='Markdown')
 
@@ -921,7 +929,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if action == "allow":
                 db.add_to_allowlist(target_id)
-                db.reset_warnings(target_id)
+                db.reset_warnings(chat_id, target_id)
                 keyboard = [[InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
@@ -935,14 +943,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id, f"❌ **Unallowd:** User `{target_id}` removed from whitelist.", parse_mode='Markdown')
 
             elif action in ["unwarn", "cancle warning"]:
-                db.reset_warnings(target_id)
+                db.reset_warnings(chat_id, target_id)
                 await context.bot.send_message(chat_id, f"🧹 **Warnings Cleared:** User `{target_id}` is now warning-free.", parse_mode='Markdown')
             
             elif action == "unban":
                 # 1. First, try to unban the user
                 try:
                     await context.bot.unban_chat_member(chat_id, target_id, only_if_banned=True)
-                    db.reset_warnings(target_id)
+                    db.reset_warnings(chat_id, target_id)
                 except Exception as e:
                     # If the bot lacks permissions or the unban fails, send the error and stop
                     await context.bot.send_message(chat_id, "❌ Failed to unban. Make sure I am an admin.")
@@ -968,7 +976,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             can_invite_users=True
                         )
                     )
-                    db.reset_warnings(target_id)
+                    db.reset_warnings(chat_id, target_id)
                 except Exception as e:
                     # Agar restrict FAILED hua (jaise admin rights nahi hain), tabhi ye message aayega
                     await context.bot.send_message(chat_id, f"❌ **Error:** Could not unmute. Please check my admin permissions.", parse_mode='Markdown')
@@ -1000,7 +1008,7 @@ async def auto_reset_on_unmute(update: Update, context: ContextTypes.DEFAULT_TYP
            (new.status == "restricted" and new.can_send_messages):
 
             user_id = new.user.id
-            db.reset_warnings(user_id)
+            db.reset_warnings(update.effective_chat.id, user_id)
 
             await context.bot.send_message(
                 update.effective_chat.id,
@@ -2718,67 +2726,77 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(chat_id, "⚠️ **Please give me delete messages permission.**", parse_mode='Markdown')
                     except:
                         pass
-            
-            count = db.add_warning(user.id)
+
+            # 🔥 FIX 1: chat_id add karo warning me
+            count = db.add_warning(chat_id, user.id)  
             warn_limit, action = config[1], config[2]
             safe_name = html.escape(user.full_name)
 
+            # 🔥 FIX 2: Check karo ki kya user sach mein is group me muted/banned hai
+            is_already_punished = False
+            try:
+                member = await context.bot.get_chat_member(chat_id, user.id)
+                if action == "mute" and member.status == "restricted" and not member.can_send_messages:
+                    is_already_punished = True
+            except BadRequest as e:
+                if "user not found" in str(e).lower() and action == "ban":
+                    is_already_punished = True  # Banned user ka member object nahi aata
 
-            # CASE 1: Already over limit (should not happen normally)
+            # CASE 1: Count limit se zyada hai
             if count > warn_limit:
-                if action == "mute":
-                    msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already muted.</b>", parse_mode='HTML')
+                if is_already_punished:
+                    # Agar sach mein already punished hai toh sirf notify karo
+                    msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already {action}ed.</b>", parse_mode='HTML')
                     context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
-                elif action == "ban":
-                    msg = await context.bot.send_message(chat_id, f"🚫 <b>User {safe_name} is already banned.</b>", parse_mode='HTML')
-                    context.job_queue.run_once(delete_msg_job, 30, chat_id=chat_id, data=msg.message_id)
+                else:
+                    # Warna ab punish karo (kyunki count limit se upar hai)
+                    if action == "mute":
+                        try:
+                            await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
+                            db.reset_warnings(chat_id, user.id)  # 🔥 chat_id add karo
+                            txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
+                            kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                            await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+                        except Exception:
+                            await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
+                            db.decrease_warning(chat_id, user.id)  # 🔥 chat_id add karo
+                    elif action == "ban":
+                        try:
+                            await context.bot.ban_chat_member(chat_id, user.id)
+                            db.reset_warnings(chat_id, user.id)  # 🔥 chat_id add karo
+                            txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
+                            kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                            await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+                        except Exception:
+                            await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
+                            db.decrease_warning(chat_id, user.id)  # 🔥 chat_id add karo
                 return
 
-            
-            # CASE 2: Exactly reached limit → Mute/Ban
+            # CASE 2: Exactly reached limit → Mute/Ban (yeh purana jaise tha, bas chat_id add karo)
             elif count == warn_limit:
                 if action == "mute":
                     try:
-                        await context.bot.restrict_chat_member(
-                            chat_id,
-                            user.id,
-                            ChatPermissions(can_send_messages=False)
-                        )
-                        # ✅ Reset warnings on successful mute
-                        db.reset_warnings(user.id)
-
+                        await context.bot.restrict_chat_member(chat_id, user.id, ChatPermissions(can_send_messages=False))
+                        db.reset_warnings(chat_id, user.id)  # 🔥 chat_id add karo
                         txt = f"🚫 <b>User is muted indefinitely</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
-                        kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}"),
-                               InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                        kb = [[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(
-                            chat_id,
-                            "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.",
-                            parse_mode='HTML'
-                        )
-                        db.decrease_warning(user.id)   # ✅ Now properly indented (4 spaces)
-
+                        await context.bot.send_message(chat_id, "🚨 <b>MUTE FAILED:</b> I need admin rights to restrict users.", parse_mode='HTML')
+                        db.decrease_warning(chat_id, user.id)  # 🔥 chat_id add karo
                 elif action == "ban":
                     try:
                         await context.bot.ban_chat_member(chat_id, user.id)
-                        # ✅ Reset warnings on successful ban
-                        db.reset_warnings(user.id)
-
+                        db.reset_warnings(chat_id, user.id)  # 🔥 chat_id add karo
                         txt = f"🚫 <b>User has been BANNED</b>\n👤 <b>Name:</b> {safe_name}\n🆔 <b>ID:</b> <code>{user.id}</code>\n📝 <b>Reason:</b> {reason}"
-                        kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"),
-                               InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
+                        kb = [[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{user.id}"), InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                         await context.bot.send_message(chat_id, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                     except Exception:
-                        await context.bot.send_message(
-                            chat_id,
-                            "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.",
-                            parse_mode='HTML'
-                        )
-                        db.decrease_warning(user.id)   # ✅ Now properly indented (4 spaces)
+                        await context.bot.send_message(chat_id, "🚨 <b>BAN FAILED:</b> I need admin rights to ban users.", parse_mode='HTML')
+                        db.decrease_warning(chat_id, user.id)  # 🔥 chat_id add karo
                 return
-    
-            # CASE 3: Normal warning (below limit)
+
+            # CASE 3: Normal warning (below limit) - yahan bhi chat_id add karo
             else:
                 base_info_text = (
                     f"👤 <b>User:</b> {user.mention_html()}\n"
@@ -2787,7 +2805,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"⚠️ <b>Warnings:</b> {count}/{warn_limit}"
                 )
 
-                # Reason-specific notice
                 if reason == "Link in Bio":
                     notice_text = (
                         "\n\n⚠️ **Link detected in your bio.**\n"
@@ -2807,6 +2824,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await context.bot.send_message(chat_id, f"⚠️ **MESSAGE REMOVED**\n\n{base_info_text}{notice_text}", parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+                    
         
 # ========== ANTI-BOT & GBAN JOIN SYSTEM ==========
 async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
