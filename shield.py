@@ -1039,7 +1039,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     text = (
         f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {html.escape(user_name)}!**\n\n" 
-        f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲 𝘁𝗼 {bot_user.first_name}!**\n\n"
         "𝗜 𝗮𝗺 𝗮𝗻 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜-𝗣𝗼𝘄𝗲𝗿𝗲𝗱 𝗦𝗲𝗰𝘂𝗿𝗶𝘁𝘆 𝗦𝘆𝘀𝘁𝗲𝗺, "
         "𝗱𝗲𝘀𝗶𝗴𝗻𝗲𝗱 𝘁𝗼 𝗸𝗲𝗲𝗽 𝘆𝗼𝘂𝗿 𝗰𝗵𝗮𝘁𝘀 𝗰𝗹𝗲𝗮𝗻, 𝘀𝗮𝗳𝗲, 𝗮𝗻𝗱 𝗽𝗿𝗼𝗳𝗲𝘀𝘀𝗶𝗼𝗻𝗮𝗹. ⚡\n\n"
         "✨ **𝗞𝗲𝘆 𝗦𝗵𝗶𝗲𝗹𝗱𝘀:**\n"
