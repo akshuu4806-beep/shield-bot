@@ -1020,25 +1020,42 @@ async def auto_reset_on_unmute(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. SAFELY Check if the user clicked the deep link from the group
-    # We check 'update.message' first so it doesn't crash when clicked via inline button
     if update.message and context.args and context.args[0] == "help":
         await help_command(update, context)
         return
 
     bot_user = await context.bot.get_me()
     chat = update.effective_chat
-    
-    # 2. Database Logging
+    user = update.effective_user
+
+    # 2. Database Logging & New User Notification (only in private)
     if chat.type == 'private':
-        db.add_user(update.effective_user)
+        # 🔍 Check if user is new (not in DB)
+        existing = db.users.find_one({"_id": user.id})
+        if not existing:
+            # 📨 Send notification to all owners (ADMIN_IDS)
+            msg_text = (
+                f"🆕 <b>New User Started the Bot!</b>\n\n"
+                f"👤 <b>Name:</b> {html.escape(user.full_name or user.first_name)}\n"
+                f"🔗 <b>Username:</b> @{user.username if user.username else 'No username'}\n"
+                f"🆔 <b>User ID:</b> <code>{user.id}</code>\n"
+                f"🔗 <b>Profile:</b> <a href='tg://user?id={user.id}'>Click here</a>"
+            )
+            for admin_id in ADMIN_IDS:
+                try:
+                    await context.bot.send_message(admin_id, msg_text, parse_mode='HTML')
+                except Exception as e:
+                    logger.error(f"Failed to send new user notification to {admin_id}: {e}")
+        # Add/update user in database
+        db.add_user(user)
     else:
         db.add_group(chat.id, chat.title)
 
-    # 3. Universal Message & Keyboard
+    # 3. Universal Message & Keyboard (rest of the function remains same)
     CHANNEL_URL = "https://t.me/+rjE5xZlIK4U3ODA1"
     user_name = update.effective_user.first_name
     text = (
-        f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {html.escape(user_name)}!**\n\n" 
+        f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {html.escape(user_name)}!**\n\n"
         "𝗜 𝗮𝗺 𝗮𝗻 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜-𝗣𝗼𝘄𝗲𝗿𝗲𝗱 𝗦𝗲𝗰𝘂𝗿𝗶𝘁𝘆 𝗦𝘆𝘀𝘁𝗲𝗺, "
         "𝗱𝗲𝘀𝗶𝗴𝗻𝗲𝗱 𝘁𝗼 𝗸𝗲𝗲𝗽 𝘆𝗼𝘂𝗿 𝗰𝗵𝗮𝘁𝘀 𝗰𝗹𝗲𝗮𝗻, 𝘀𝗮𝗳𝗲, 𝗮𝗻𝗱 𝗽𝗿𝗼𝗳𝗲𝘀𝘀𝗶𝗼𝗻𝗮𝗹. ⚡\n\n"
         "✨ **𝗞𝗲𝘆 𝗦𝗵𝗶𝗲𝗹𝗱𝘀:**\n"
@@ -1051,22 +1068,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **𝗔𝗻𝘁𝗶-𝗕𝗼𝘁**: Automatically kicks malicious bots (except admins).\n\n"
         "💡 _Click the buttons below to explore more!_"
     )
-    
+
     keyboard = [
         [InlineKeyboardButton("➕ 𝐀𝐝𝐝 𝐭𝐨 𝐆𝐫𝐨𝐮𝐩", url=f"https://t.me/{bot_user.username}?startgroup=true")],
         [InlineKeyboardButton("𝐇𝐞𝐥𝐩❓", callback_data="help_main"), InlineKeyboardButton("📢 Support Channel", url=CHANNEL_URL)],
-        [InlineKeyboardButton("👑 Owner & Sudo Menu 🔒", callback_data="sudo_menu")], # <--- NAYA BUTTON
+        [InlineKeyboardButton("👑 Owner & Sudo Menu 🔒", callback_data="sudo_menu")],
         [InlineKeyboardButton("𝗖𝗹𝗼𝘀𝗲 🗑", callback_data="delete_msg")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     # 4. Send or Edit the Output
     if update.callback_query:
-        # If triggered by "⬅️ Back" button, edit the current message
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        # If triggered by typing /start, send a new message
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        
         
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
