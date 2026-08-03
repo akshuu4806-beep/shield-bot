@@ -2698,8 +2698,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         violation, reason = False, ""
         
         # 1. ANTI-LINK (Message)
-        if msg_text and has_link(msg_text):
-            violation, reason = True, "Link in Message"
+        if msg_text:
+            if has_link(msg_text):
+                violation, reason = True, "Link in Message"
+            else:
+                # Check for @username mentions that are groups/channels
+                username_matches = re.findall(r'@([a-zA-Z0-9_]{5,32})', msg_text)
+                for uname in username_matches:
+                    try:
+                        chat = await context.bot.get_chat(f"@{uname}")
+                        if chat.type in ['group', 'supergroup', 'channel']:
+                            violation, reason = True, "Group/Channel mention in Message"
+                            break
+                    except Exception:
+                        continue
 
         # 2. BIO CHECK (Link + Contact) – Only if bio_check is enabled
         if not violation and bio_check_enabled:
