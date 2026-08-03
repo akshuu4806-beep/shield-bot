@@ -2710,14 +2710,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_bio = None
 
             if user_bio:
-                if has_link(user_bio) or "@" in user_bio:
+                # 1. Traditional link (http, t.me, etc.) ko pakdo
+                if has_link(user_bio):
                     violation, reason = True, "Link in Bio"
                     db.update_stat('bio_caught')
-        # Agar aapke paas anti_contact_enabled variable hai toh usko bhi condition me rakh sakte hain
-        # else:
-        #     if has_contact_info(user_bio):
-        #         violation, reason = True, "Phone/Email in Bio"
-        #         db.update_stat('bio_caught')
+                else:
+                    # 2. Sirf @username mention check karo, lekin type dekhkar block karo
+                    username_matches = re.findall(r'@([a-zA-Z0-9_]{5,32})', user_bio)
+                    for uname in username_matches:
+                        try:
+                            chat = await context.bot.get_chat(f"@{uname}")
+                            # Agar yeh koi group ya channel hai to block karo
+                            if chat.type in ['group', 'supergroup', 'channel']:
+                                violation, reason = True, "Group/Channel mention in Bio"
+                                db.update_stat('bio_caught')
+                                break
+                        except Exception:
+                            # Agar username exist nahi karta ya koi error, ignore karo (koi link nahi)
+                            continue
+                
 
         # 4. MALICIOUS FILE BLOCKER (Anti-Virus)
         if not violation and update.message.document:
