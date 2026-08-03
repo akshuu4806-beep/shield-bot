@@ -1360,16 +1360,32 @@ async def allowlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
         return
-    chat_id = update.effective_chat.id
-    allowlist = db.get_allowlist(chat_id)   # <-- chat_id pass
-    if not allowlist:
-        await update.message.reply_text("allowd list is empty.")
-        return
-    text = "✅ **allowd Users:**\n\n"
-    for idx, uid in enumerate(allowlist, 1):
-        text += f"{idx}. `{uid}`\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
 
+    chat_id = update.effective_chat.id
+    allowlist = db.get_allowlist(chat_id)   # list of user_ids
+
+    if not allowlist:
+        await update.message.reply_text("📭 Whitelist is empty in this group.")
+        return
+
+    text = "✅ **Whitelisted Users in this group:**\n\n"
+    for idx, uid in enumerate(allowlist, 1):
+        # Database se user info fetch karein
+        user_info = db.users.find_one({"_id": uid})
+        if user_info:
+            name = user_info.get("full_name") or user_info.get("first_name") or "Unknown"
+            mention = f'<a href="tg://user?id={uid}">{html.escape(name)}</a>'
+            text += f"{idx}. {mention} (<code>{uid}</code>)\n"
+        else:
+            # Agar user DB mein nahi hai (rare case), toh sirf ID dikhayein
+            text += f"{idx}. <code>{uid}</code>\n"
+
+    # Agar list bahut lambi ho toh truncate karein
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (List truncated)"
+
+    await update.message.reply_text(text, parse_mode='HTML')
+    
 # ==========================================
 #      OWNER TOOLS: BROADCAST & GROUP LIST
 # ==========================================
