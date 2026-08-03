@@ -78,6 +78,7 @@ class PersistentDB:
         self.db = self.client["shield_bot_db"]
         self.group_config = self.db["group_config"]
         self.allowlist = self.db["allowlist"]
+        self.allowlist.create_index([("chat_id", 1), ("user_id", 1)], unique=True)
         self.warnings = self.db["warnings"]
         self.users = self.db["users"]
         self.groups = self.db["groups"]
@@ -231,23 +232,22 @@ class PersistentDB:
         groups = [g["_id"] for g in self.groups.find()]
         return list(set(users + groups))
 
-    def is_allowed(self, user_id):
-        return self.allowlist.find_one({"_id": user_id}) is not None
+    # ========== GROUP-SPECIFIC ALLOWLIST ==========
+    def add_to_allowlist(self, chat_id, user_id):
+        # Pehle check karein agar already exist karta hai to duplicate na ho
+        if not self.is_allowed(chat_id, user_id):
+            self.allowlist.insert_one({"chat_id": chat_id, "user_id": user_id})
 
-    def add_to_allowlist(self, user_id):
-        if not self.is_allowed(user_id):
-            self.allowlist.insert_one({"_id": user_id})
-            return True
-        return False
+    def remove_from_allowlist(self, chat_id, user_id):
+        result = self.allowlist.delete_one({"chat_id": chat_id, "user_id": user_id})
+        return result.deleted_count > 0
 
-    def remove_from_allowlist(self, user_id):
-        if self.is_allowed(user_id):
-            self.allowlist.delete_one({"_id": user_id})
-            return True
-        return False
+    def is_allowed(self, chat_id, user_id):
+        return self.allowlist.find_one({"chat_id": chat_id, "user_id": user_id}) is not None
 
-    def get_allowlist(self):
-        return [u["_id"] for u in self.allowlist.find()]
+    def get_allowlist(self, chat_id):
+        # Sirf us group ke allowed users ki list return karein
+        return [doc["user_id"] for doc in self.allowlist.find({"chat_id": chat_id})]
 
     def is_sudo(self, user_id):
         return self.sudos.find_one({"_id": user_id}) is not None
@@ -510,14 +510,15 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
-        
+
+    chat_id = update.effective_chat.id
     target_id, target_name, error_msg = await extract_target(update, context)
 
     if not target_id:
         await update.message.reply_text(error_msg)
         return
 
-    # Check if the target user is an admin
+    # Check if the target user is an admin (Owner, Sudo, or group admin)
     is_target_admin = False
     if target_id in ADMIN_IDS:
         is_target_admin = True
@@ -528,16 +529,18 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 is_target_admin = True
         except Exception:
             pass
-            
+
     if is_target_admin:
-        await update.message.reply_text("user is already admin admins are already allowd")
+        await update.message.reply_text("❌ This user is an admin and is already allowed.")
         return
 
-    db.add_to_allowlist(target_id)
-    db.reset_warnings(update.effective_chat.id, target_id)
-    safe_name = target_name or str(target_id)
-    await update.message.reply_text(f"✅ **{safe_name}** (`{target_id}`) has been whitelisted.", parse_mode='Markdown')
+    # Add to group-specific allowlist
+    db.add_to_allowlist(chat_id, target_id)
+    db.reset_warnings(chat_id, target_id)
 
+    safe_name = target_name or str(target_id)
+    await update.message.reply_text(f"✅ **{safe_name}** (`{target_id}`) has been whitelisted in this group.", parse_mode='Markdown')
+    
 async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
         await update.message.reply_text("❌ This command only works in groups.")
@@ -546,7 +549,8 @@ async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context):
         await update.message.reply_text("❌ You have not permission.")
         return
-        
+
+    chat_id = update.effective_chat.id
     target_id, target_name, error_msg = await extract_target(update, context)
 
     if not target_id:
@@ -564,17 +568,17 @@ async def unallow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 is_target_admin = True
         except Exception:
             pass
-            
+
     if is_target_admin:
-        await update.message.reply_text("this user is an admin they cannot be unallowd")
+        await update.message.reply_text("❌ This user is an admin and cannot be unallowed.")
         return
 
     safe_name = target_name or str(target_id)
-    if db.remove_from_allowlist(target_id):
-        await update.message.reply_text(f"❌ **{safe_name}** (`{target_id}`) removed from whitelist.", parse_mode='Markdown')
+    if db.remove_from_allowlist(chat_id, target_id):
+        await update.message.reply_text(f"❌ **{safe_name}** (`{target_id}`) removed from whitelist in this group.", parse_mode='Markdown')
     else:
-        await update.message.reply_text(f"**{safe_name}** (`{target_id}`) was not in the whitelist.", parse_mode='Markdown')
-
+        await update.message.reply_text(f"**{safe_name}** (`{target_id}`) was not in the whitelist of this group.", parse_mode='Markdown')
+        
 async def flush_bulk_deletes(context: ContextTypes.DEFAULT_TYPE):
     """Scheduled job: har 2 seconds mein queue ko process karega"""
     for chat_id, msg_ids in list(BULK_DELETE_QUEUE.items()):
@@ -928,15 +932,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_id = int(parts[-1])
 
             if action == "allow":
-                db.add_to_allowlist(target_id)
-                db.reset_warnings(chat_id, target_id)
+                target_id = int(parts[-1])
+                chat_id = update.effective_chat.id          # <-- current group ka chat_id
+                db.add_to_allowlist(chat_id, target_id)     # <-- chat_id pass kiya
+                db.reset_warnings(chat_id, target_id)       # <-- chat_id pass kiya
                 keyboard = [[InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
                 await context.bot.send_message(chat_id, f"✅ **allowd:** User `{target_id}` has been whitelisted.", parse_mode='Markdown')
 
             elif action == "unallow":
-                db.remove_from_allowlist(target_id)
+                target_id = int(parts[-1])
+                chat_id = update.effective_chat.id          # <-- current group ka chat_id
+                db.remove_from_allowlist(chat_id, target_id)  # <-- chat_id pass kiya
                 keyboard = [[InlineKeyboardButton("✅ allow", callback_data=f"allow_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1352,7 +1360,8 @@ async def allowlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_admin(update, context): 
         await update.message.reply_text("❌ You have not permission.")
         return
-    allowlist = db.get_allowlist()
+    chat_id = update.effective_chat.id
+    allowlist = db.get_allowlist(chat_id)   # <-- chat_id pass
     if not allowlist:
         await update.message.reply_text("allowd list is empty.")
         return
@@ -2499,7 +2508,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Determine if user is Admin or allowd
     is_exempt = False
     if user:
-        if user.id in ADMIN_IDS or db.is_allowed(user.id):
+        if user.id in ADMIN_IDS or db.is_allowed(chat_id, user.id):
             is_exempt = True
         else:
             try:
@@ -2857,7 +2866,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     notice_text = ""
 
-                is_app = db.is_allowed(user.id)
+                is_app = db.is_allowed(chat_id, user.id)   # ✅ SAHI
                 app_btn = InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{user.id}") if is_app else InlineKeyboardButton("✅ allow", callback_data=f"allow_{user.id}")
                 keyboard = [[app_btn, InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{user.id}")],
                             [InlineKeyboardButton("🗑 Delete", callback_data="delete_msg")]]
