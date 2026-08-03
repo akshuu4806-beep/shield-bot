@@ -2710,7 +2710,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_bio = None
 
             if user_bio:
-                if has_link(user_bio):
+                if has_link(user_bio) or "@" in user_bio:
                     violation, reason = True, "Link in Bio"
                     db.update_stat('bio_caught')
         # Agar aapke paas anti_contact_enabled variable hai toh usko bhi condition me rakh sakte hain
