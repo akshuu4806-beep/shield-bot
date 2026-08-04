@@ -361,6 +361,14 @@ logger = logging.getLogger(__name__)
 # ... [Aapka baki pura code yahan aayega, jaise start_command, message_handler, etc.] ...
 # Note: Maine code length ki wajah se yahan functions skip kiye hain, par aapko apne baki commands as it is rakhne hain.
 
+async def store_user_info(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Fetch user details from Telegram and store in the database."""
+    try:
+        chat_user = await context.bot.get_chat(user_id)
+        db.add_user(chat_user)
+    except Exception:
+        db.add_user(user_id)  # fallback: store only ID
+
 # ========== HELPERS ==========
 async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -500,7 +508,7 @@ async def extract_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return resolved_id, resolved_name, reason
             
     # If nothing matches
-    return None, None, "❌ User nahi mila. Kripya sahi ID, Username, ya Reply ka use karein."
+    return None, None, "❌ This user is not exists. Please provide a valid ID, username, or reply."
     
 async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
@@ -518,6 +526,8 @@ async def allow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(error_msg)
         return
 
+    await store_user_info(target_id, context)
+    
     # Check if the target user is an admin (Owner, Sudo, or group admin)
     is_target_admin = False
     if target_id in ADMIN_IDS:
@@ -934,6 +944,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if action == "allow":
                 target_id = int(parts[-1])
                 chat_id = update.effective_chat.id          # <-- current group ka chat_id
+                await store_user_info(target_id, context)   # 👈 ADD THIS
                 db.add_to_allowlist(chat_id, target_id)     # <-- chat_id pass kiya
                 db.reset_warnings(chat_id, target_id)       # <-- chat_id pass kiya
                 keyboard = [[InlineKeyboardButton("❌ Unallow", callback_data=f"unallow_{target_id}"), InlineKeyboardButton("🧹 Cancel warning", callback_data=f"cancle warning_{target_id}")],
@@ -1352,7 +1363,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def allowlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ✅ GROUP-ONLY CHECK
+    # ✅ GROUP-ONLY CHECK (already hai)
     if update.effective_chat.type == 'private':
         await update.message.reply_text("❌ This command only works in groups.")
         return
@@ -1370,17 +1381,24 @@ async def allowlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "✅ **Whitelisted Users in this group:**\n\n"
     for idx, uid in enumerate(allowlist, 1):
-        # Database se user info fetch karein
+        # Pehle DB mein check karo
         user_info = db.users.find_one({"_id": uid})
+        if not user_info:
+            # Agar nahi mila toh Telegram se fetch karo
+            try:
+                chat_user = await context.bot.get_chat(uid)
+                db.add_user(chat_user)   # DB mein store
+                user_info = db.users.find_one({"_id": uid})  # ab mil jayega
+            except Exception:
+                user_info = None
         if user_info:
             name = user_info.get("full_name") or user_info.get("first_name") or "Unknown"
             mention = f'<a href="tg://user?id={uid}">{html.escape(name)}</a>'
             text += f"{idx}. {mention} (<code>{uid}</code>)\n"
         else:
-            # Agar user DB mein nahi hai (rare case), toh sirf ID dikhayein
+            # Agar still nahi mila (maybe user deleted account), toh sirf ID
             text += f"{idx}. <code>{uid}</code>\n"
 
-    # Agar list bahut lambi ho toh truncate karein
     if len(text) > 4000:
         text = text[:4000] + "\n... (List truncated)"
 
