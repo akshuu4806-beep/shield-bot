@@ -1076,7 +1076,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"🛡️ **𝗪𝗲𝗹𝗰𝗼𝗺𝗲, {html.escape(user_name)}!**\n\n"
         "𝗜 𝗮𝗺 𝗮𝗻 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜-𝗣𝗼𝘄𝗲𝗿𝗲𝗱 𝗦𝗲𝗰𝘂𝗿𝗶𝘁𝘆 𝗦𝘆𝘀𝘁𝗲𝗺, "
-        "𝗱𝗲𝘀𝗶𝗴𝗻𝗲𝗱 𝘁𝗼 𝗸𝗲𝗲𝗽 𝘆𝗼𝘂𝗿 𝗰𝗵𝗮𝘁𝘀 𝗰𝗹𝗲𝗮𝗻, 𝘀𝗮𝗳𝗲, 𝗮𝗻𝗱 𝗽𝗿𝗼𝗳𝗲𝘀𝘀𝗶𝗼𝗻𝗮𝗹. ⚡\n\n"
+        "𝗱𝗲𝘀𝗶𝗴𝗻𝗲𝗱 𝘁𝗼 𝐩𝐫𝐨𝐭𝐞𝐜𝐭 𝐲𝐨𝐮𝐫 𝐠𝐫𝐨𝐮𝐩. ⚡\n\n"
         "✨ **𝗞𝗲𝘆 𝗦𝗵𝗶𝗲𝗹𝗱𝘀:**\n"
         "🔞 **𝗔𝗜 𝗡𝗦𝗙𝗪 𝗚𝘂𝗮𝗿𝗱**: Scans & deletes explicit media using AI.\n"
         "🤬 **𝗔𝗯𝘂𝘀𝗲 𝗦𝗵𝗶𝗲𝗹𝗱**: Instantly removes abusive words.\n"
@@ -1084,6 +1084,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛡️ **𝗕𝗶𝗼 𝗚𝘂𝗮𝗿𝗱**: Scan bios for links and restrict users.\n"
         "🔒 **𝗔𝗻𝘁𝗶-𝗖𝗵𝗮𝗻𝗻𝗲𝗹**: Blocks anonymous channel posts.\n"
         "✏️ **𝗘𝗱𝗶𝘁 𝗚𝘂𝗮𝗿𝗱**: Deletes edited messages to prevent spam.\n"
+        "🗑️ **𝗠𝗲𝗱𝗶𝗮 𝗖𝗹𝗲𝗮𝗻𝗲𝗿**: Auto‑deletes old media after set time.\n"
         "🤖 **𝗔𝗻𝘁𝗶-𝗕𝗼𝘁**: Automatically kicks malicious bots (except admins).\n\n"
         "💡 _Click the buttons below to explore more!_"
     )
