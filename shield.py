@@ -372,54 +372,80 @@ async def store_user_info(user_id: int, context: ContextTypes.DEFAULT_TYPE):
 # ========== HELPERS ==========
 
 async def check_and_announce_user_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Detects name/username changes and announces in the group."""
+    """Detects name/username changes and announces in the group with a styled box."""
     if not update.message or update.effective_chat.type == 'private':
         return
 
     user = update.message.from_user
     chat_id = update.effective_chat.id
 
-    # Fetch current details from Telegram
+    # 1. Current details
     current_name = user.full_name or user.first_name or ""
     current_username = user.username or ""
 
-    # Fetch stored details from database
+    # 2. Stored details from DB
     stored_user = db.users.find_one({"_id": user.id})
     if not stored_user:
-        # New user – store details and exit
         db.add_user(user)
         return
 
     stored_name = stored_user.get("full_name") or stored_user.get("first_name") or ""
     stored_username = stored_user.get("username") or ""
 
-    # Check if anything changed
+    # 3. Check changes
     name_changed = current_name != stored_name
     username_changed = current_username != stored_username
 
     if not name_changed and not username_changed:
-        return  # No changes
+        return
 
-    # Build announcement message
-    changes = []
+    # 4. Prepare bot name (dynamic)
+    bot_info = await context.bot.get_me()
+    bot_name = bot_info.first_name or "Bot"
+
+    # 5. Build the boxed announcement
+    # Box width – adjust if header text is longer
+    header_text = "⚠️ USER DETAILS CHANGED"
+    box_width = max(len(header_text) + 4, 27)   # at least 27 for aesthetics
+    padding = (box_width - len(header_text)) // 2
+
+    top_line = "┌" + "─" * box_width + "┐"
+    middle_line = "│" + " " * padding + header_text + " " * (box_width - padding - len(header_text)) + "│"
+    bottom_line = "└" + "─" * box_width + "┘"
+
+    # User display name (without HTML mention, pure text)
+    display_name = user.full_name or user.first_name or str(user.id)
+
+    # Lines for changes (only if changed)
+    lines = []
     if name_changed:
-        changes.append(f"📛 **Name:** `{stored_name}` → `{current_name}`")
+        old = stored_name or "None"
+        new = current_name or "None"
+        lines.append(f"🔴 Old Name: {old}")
+        lines.append(f"🟢 New Name: {new}")
     if username_changed:
-        old_uname = f"@{stored_username}" if stored_username else "None"
-        new_uname = f"@{current_username}" if current_username else "None"
-        changes.append(f"🔗 **Username:** {old_uname} → {new_uname}")
+        old = f"@{stored_username}" if stored_username else "None"
+        new = f"@{current_username}" if current_username else "None"
+        lines.append(f"🔴 Old Username: {old}")
+        lines.append(f"🟢 New Username: {new}")
 
+    # Combine all
     announcement = (
-        f"🔄 **Profile Update Detected**\n"
-        f"👤 {user.mention_html()}\n\n"
-        + "\n".join(changes)
+        f"{bot_name}\n"
+        f"{top_line}\n"
+        f"{middle_line}\n"
+        f"{bottom_line}\n\n"
+        f"👤 User: {display_name}\n"
+        f"🆔 User ID: {user.id}\n\n"
+        + "\n".join(lines)
     )
 
-    # Send announcement (without pinning or deleting)
-    await context.bot.send_message(chat_id, announcement, parse_mode='HTML')
+    # 6. Send – plain text (no parse_mode needed)
+    await context.bot.send_message(chat_id, announcement)
 
-    # Update the database with new details
-    db.add_user(user)  # This will overwrite stored fields with current values
+    # 7. Update database
+    db.add_user(user)
+    
     
 async def is_user_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
