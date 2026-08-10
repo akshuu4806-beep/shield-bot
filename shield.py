@@ -1874,7 +1874,7 @@ async def gban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=target_id,
-            text=f"🚨 <b>GLOBAL BAN NOTICE</b> 🚨\n\nYou have been Globally Banned from all groups managed by this bot.\n\n📝 <b>Reason:</b> {safe_reason}\n\n<i>Contact the bot owner (@anurag_9X) if you think this is a mistake.</i>",
+            text=f"🚨 <b>GLOBAL BAN NOTICE</b> 🚨\n\nYou have been Globally Banned from all groups managed by this bot.\n\n📝 <b>Reason:</b> {safe_reason}\n\n<i>Contact the bot owner (@Innocent_vaibhav) if you think this is a mistake.</i>",
             parse_mode='HTML'
         )
     except Exception as e:
