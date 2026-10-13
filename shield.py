@@ -3026,12 +3026,12 @@ async def anti_bot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 alert_msg = await context.bot.send_message(
                     chat_id, 
                     f"🚨 {new_member.mention_html()} was globally banned and has been removed.\n\n"
-                    "**Reason:** You are globally banned. Contact bot owner (@anurag_9X)",
+                    "**Reason:** You are globally banned. Contact bot owner (@Innocent_vaibhav)",
                     parse_mode='HTML'
                 )
                 context.job_queue.run_once(delete_msg_job, 10, chat_id=chat_id, data=alert_msg.message_id)
                 try:
-                    await context.bot.send_message(new_member.id, "You are globally banned. Contact bot owner (@anurag_9X)")
+                    await context.bot.send_message(new_member.id, "You are globally banned. Contact bot owner (@Innocent_vaibhav)")
                 except: pass
             except Exception: 
                 pass
