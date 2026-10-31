@@ -789,44 +789,145 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 👇 YAHAN PAR ADD KARNA HAI 👇
     # ==========================================
-    # 👑 OWNER & SUDO LOCKED MENU
+        # ==========================================
+    # 👑 OWNER & SUDO INTERACTIVE PANEL
     # ==========================================
     if query.data == "sudo_menu":
-        # Security Check: Agar user Owner ya Sudo nahi hai, toh popup alert dedo
+        # Backward compat: old start-message button redirects to new panel
         if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
-            await query.answer("❌ ACCESS DENIED!\n\nThis menu is locked. Only the Bot Owner and Sudo Admins can open it.", show_alert=True)
+            await query.answer("❌ ACCESS DENIED!\n\nOnly the Bot Owner and Sudo Admins can open this.", show_alert=True)
             return
-            
-        # Agar Owner/Sudo hai, toh commands ki list dikhao
-        sudo_text = (
-            "👑 **OWNER & SUDO COMMANDS**\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• `/broadcast <text>` : Message to all active groups\n"
-            "• `/grouplist` : List all monitored groups\n"
-            "• `/getlink <s_no>` : Get invite link of a group\n"
-            "• `/gmsg <s_no> <text>` : Send a direct message\n"
-            "• `/greply <s_no> <msg_id> <txt>` : Reply to a group message\n"
-            "• `/greact <s_no> <msg_id> <emoji>` : Add reaction to message\n"
-            "• `/cleangroups` : Remove dead groups from database\n"
-            "• `/nsfw all on/off` : Global NSFW Control\n\n"
-            "🛠️ **CUSTOM BLOCKLISTS**\n"
-            "• `/addsticker`, `/rmsticker`, `/stickerlist`\n"
-            "• `/addword`, `/rmword`, `/wordlist`\n\n"
-            "👮‍♂️ **ADMIN MANAGEMENT**\n"
-            "• `/addsudo` : Promote user to Sudo\n"
-            "• `/rmsudo` : Demote Sudo Admin\n"
-            "• `/sudolist` : List all Sudo Admins\n"
-            "• `/gban` : Ban globally\n"
-            "• `/ungban` : Unban globally\n"
-            "• `/gbanlist` : List of gban user\n"
-        )
-        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_start")]]
-        
-        await query.edit_message_text(sudo_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await render_owner_panel(update, context)
         try: await query.answer()
         except: pass
         return
-    # 👆 YAHAN TAK 👆
+
+    # --- Handle all "own_" buttons ---
+    if query.data.startswith("own_"):
+        if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+            await query.answer("❌ ACCESS DENIED!", show_alert=True)
+            return
+
+        action = query.data[4:]  # strip "own_" prefix
+
+        # 📖 Help popups for commands that need arguments
+        help_texts = {
+            "help_broadcast": "📢 BROADCAST USAGE\n\n/broadcast <text>\n/broadcast <sno> <text>\n\nOr reply to a message with /broadcast",
+            "help_getlink":  "🔗 GET LINK USAGE\n\n/getlink <serial_no>\n\nGet serial number from /grouplist",
+            "help_gmsg":     "💬 SEND MESSAGE USAGE\n\n/gmsg <serial_no> <text>\n\nAdd -pin or -unpin at start",
+            "help_greply":   "💭 REPLY USAGE\n\n/greply <serial_no> <msg_id> <text>",
+            "help_greact":   "⚡ ADD REACTION USAGE\n\n/greact <serial_no> <msg_id> <emoji>",
+            "help_addsudo":  "🛡️ ADD SUDO USAGE\n\n/addsudo <user_id or @username>\nOr reply to a user's message with /addsudo",
+            "help_rmsudo":   "❌ REMOVE SUDO USAGE\n\n/rmsudo <user_id or @username>",
+            "help_gban":     "🔨 GBAN USAGE\n\n/gban <user_id or @username> [reason]\nOr reply to a user's message with /gban",
+            "help_ungban":   "🔓 UNGBAN USAGE\n\n/ungban <user_id or @username>",
+        }
+        if action in help_texts:
+            await query.answer(help_texts[action], show_alert=True)
+            return
+
+        # ✅ GROUP LIST
+        if action == "grouplist":
+            groups = db.get_groups()
+            if not groups:
+                await query.answer("📭 No groups found", show_alert=True)
+                return
+            text_out = "📋 <b>Active Groups:</b>\n\n"
+            for idx, (cid, title) in enumerate(groups, 1):
+                text_out += f"<b>{idx}.</b> {html.escape(title or 'Unknown')} (<code>{cid}</code>)\n"
+            if len(text_out) > 4000:
+                text_out = text_out[:4000] + "\n...(truncated)"
+            await query.message.reply_text(text_out, parse_mode='HTML')
+            await query.answer()
+            return
+
+        # ✅ SUDO LIST
+        if action == "sudolist":
+            sudo_ids = db.get_sudos()
+            if not sudo_ids:
+                await query.answer("📭 Sudo list is empty", show_alert=True)
+                return
+            text_out = "👑 <b>Sudo Admins:</b>\n\n"
+            for idx, uid in enumerate(sudo_ids, 1):
+                info = db.users.find_one({"_id": uid})
+                name = (info.get("full_name") or info.get("first_name") or str(uid)) if info else str(uid)
+                text_out += f"{idx}. {html.escape(name)} (<code>{uid}</code>)\n"
+            await query.message.reply_text(text_out, parse_mode='HTML')
+            await query.answer()
+            return
+
+        # ✅ GBAN LIST
+        if action == "gbanlist":
+            gbans = db.get_gbans()
+            if not gbans:
+                await query.answer("📭 GBan list is empty", show_alert=True)
+                return
+            text_out = "🌍 <b>Globally Banned Users:</b>\n\n"
+            for idx, (uid, reason) in enumerate(gbans, 1):
+                text_out += f"{idx}. <code>{uid}</code> — {html.escape(reason)}\n"
+            if len(text_out) > 4000:
+                text_out = text_out[:4000] + "\n...(truncated)"
+            await query.message.reply_text(text_out, parse_mode='HTML')
+            await query.answer()
+            return
+
+        # ✅ STICKER LIST
+        if action == "stickerlist":
+            packs = db.get_blocked_stickers()
+            if not packs:
+                await query.answer("📭 Sticker list is empty", show_alert=True)
+                return
+            text_out = "🚫 <b>Blocked Sticker Packs:</b>\n\n" + "\n".join([f"• <code>{p}</code>" for p in packs])
+            await query.message.reply_text(text_out, parse_mode='HTML')
+            await query.answer()
+            return
+
+        # ✅ WORD LIST
+        if action == "wordlist":
+            words = db.get_blocked_words()
+            if not words:
+                await query.answer("📭 Word list is empty", show_alert=True)
+                return
+            text_out = "🚫 <b>Blocked Words:</b>\n\n" + "\n".join([f"• <code>{w}</code>" for w in words])
+            await query.message.reply_text(text_out, parse_mode='HTML')
+            await query.answer()
+            return
+
+        # ✅ NSFW ALL ON / OFF
+        if action in ("nsfw_all_on", "nsfw_all_off"):
+            state = (action == "nsfw_all_on")
+            db.set_global_nsfw(state)
+            groups = db.get_groups()
+            for cid, _ in groups:
+                db.set_nsfw(cid, state)
+            status_icon = "🟢 ENABLED" if state else "🔴 DISABLED"
+            await query.answer(f"✅ NSFW filter {status_icon} for ALL {len(groups)} groups", show_alert=True)
+            return
+
+        # ✅ CLEAN GROUPS
+        if action == "cleangroups":
+            await query.answer("⏳ Scanning groups… please wait", show_alert=True)
+            groups = db.get_groups()
+            removed = active = 0
+            for cid, _ in groups:
+                try:
+                    await context.bot.get_chat(cid)
+                    active += 1
+                    await asyncio.sleep(0.1)
+                except (Forbidden, BadRequest):
+                    db.remove_group(cid)
+                    removed += 1
+                except Exception:
+                    pass
+            await query.message.reply_text(
+                f"✅ <b>Cleanup Complete!</b>\n\n"
+                f"🗑️ Removed: <code>{removed}</code>\n"
+                f"🟢 Active: <code>{active}</code>",
+                parse_mode='HTML'
+            )
+            return
+
+        return👆
 
     # Anti-Bot Toggle Button (accessible only to admins)
     if query.data == "antibot_toggle":
@@ -1166,11 +1267,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💡 _Click the buttons below to explore more!_"
     )
 
-    keyboard = [
-        [InlineKeyboardButton("➕ 𝐀𝐝𝐝 𝐭𝐨 𝐆𝐫𝐨𝐮𝐩", url=f"https://t.me/{bot_user.username}?startgroup=true")],
-        [InlineKeyboardButton("𝐇𝐞𝐥𝐩❓", callback_data="help_main"), InlineKeyboardButton("📢 Support Channel", url=CHANNEL_URL)],
-        [InlineKeyboardButton("👑 Owner & Sudo Menu 🔒", callback_data="sudo_menu")],
-        [InlineKeyboardButton("𝗖𝗹𝗼𝘀𝗲 🗑", callback_data="delete_msg")]
+        keyboard = [
+        [InlineKeyboardButton("🟢 ➕ 𝐀𝐝𝐝 𝐭𝐨 𝐆𝐫𝐨𝐮𝐩", url=f"https://t.me/{bot_user.username}?startgroup=true")],
+        [InlineKeyboardButton("🔵 𝐇𝐞𝐥𝐩❓", callback_data="help_main"), InlineKeyboardButton("🔵 📢 Support Channel", url=CHANNEL_URL)],
+        [InlineKeyboardButton("⚫ 𝗖𝗹𝗼𝘀𝗲 🗑", callback_data="delete_msg")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1180,7 +1280,65 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
         
-        
+# ========== 👑 OWNER / SUDO CONTROL PANEL ==========
+async def render_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Renders the Owner & Sudo interactive control panel."""
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+        return False
+
+    total_groups = len(db.get_groups())
+    total_sudos  = len(db.get_sudos())
+    total_gbans  = len(db.get_gbans())
+
+    text = (
+        "👑 <b>OWNER &amp; SUDO CONTROL PANEL</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 Groups: <code>{total_groups}</code>  |  "
+        f"👮 Sudos: <code>{total_sudos}</code>  |  "
+        f"⚠️ GBans: <code>{total_gbans}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <i>Tap any button below to execute.</i>\n"
+        "🎨 <i>Colors: 🟢 Safe · 🔴 Destructive · 🟡 Caution · 🔵 Info · ⚫ Delete</i>"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🔵 📋 Group List", callback_data="own_grouplist")],
+        [InlineKeyboardButton("🟢 🔞 NSFW All ON", callback_data="own_nsfw_all_on"),
+         InlineKeyboardButton("🔴 🔞 NSFW All OFF", callback_data="own_nsfw_all_off")],
+        [InlineKeyboardButton("🔵 🚫 Sticker List", callback_data="own_stickerlist"),
+         InlineKeyboardButton("🔵 📝 Word List", callback_data="own_wordlist")],
+        [InlineKeyboardButton("🔵 👮 Sudo List", callback_data="own_sudolist"),
+         InlineKeyboardButton("🔵 ⚠️ GBan List", callback_data="own_gbanlist")],
+        [InlineKeyboardButton("🟡 🧹 Clean Dead Groups", callback_data="own_cleangroups")],
+        [InlineKeyboardButton("🟢 📢 Broadcast", callback_data="own_help_broadcast"),
+         InlineKeyboardButton("🟢 🔗 Get Link", callback_data="own_help_getlink")],
+        [InlineKeyboardButton("🟢 💬 Send Message", callback_data="own_help_gmsg"),
+         InlineKeyboardButton("🟢 💭 Reply", callback_data="own_help_greply")],
+        [InlineKeyboardButton("🟢 ⚡ Add Reaction", callback_data="own_help_greact")],
+        [InlineKeyboardButton("🟢 🛡️ Add Sudo", callback_data="own_help_addsudo"),
+         InlineKeyboardButton("🔴 ❌ Remove Sudo", callback_data="own_help_rmsudo")],
+        [InlineKeyboardButton("🔴 🔨 GBan User", callback_data="own_help_gban"),
+         InlineKeyboardButton("🟢 🔓 UnGban User", callback_data="own_help_ungban")],
+        [InlineKeyboardButton("⚫ ⬅️ Close", callback_data="delete_msg")],
+    ]
+    markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
+    else:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode='HTML')
+    return True
+
+
+async def owner_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner / Sudo panel command."""
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS and not db.is_sudo(user_id):
+        await update.message.reply_text("❌ Only Owner and Sudo Admins can use this command.")
+        return
+    await render_owner_panel(update, context)
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 **BOT COMMANDS MENU**\n"
@@ -3121,6 +3279,7 @@ def main():
     
     # ✅ FIX: All handlers now use app_bot instead of app
     app_bot.add_handler(CommandHandler("start", start_command))
+    app_bot.add_handler(CommandHandler("owner", owner_command))  
     app_bot.add_handler(CommandHandler("help", help_command))
     app_bot.add_handler(CommandHandler("broadcast", broadcast_command))
     app_bot.add_handler(CommandHandler("delay", set_delay_command))
