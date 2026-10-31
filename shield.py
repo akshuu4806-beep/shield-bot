@@ -927,7 +927,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        return👆
+        return
 
     # Anti-Bot Toggle Button (accessible only to admins)
     if query.data == "antibot_toggle":
