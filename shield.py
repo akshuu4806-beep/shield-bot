@@ -1267,7 +1267,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💡 _Click the buttons below to explore more!_"
     )
 
-        keyboard = [
+    keyboard = [
         [InlineKeyboardButton("🟢 ➕ 𝐀𝐝𝐝 𝐭𝐨 𝐆𝐫𝐨𝐮𝐩", url=f"https://t.me/{bot_user.username}?startgroup=true")],
         [InlineKeyboardButton("🔵 𝐇𝐞𝐥𝐩❓", callback_data="help_main"), InlineKeyboardButton("🔵 📢 Support Channel", url=CHANNEL_URL)],
         [InlineKeyboardButton("⚫ 𝗖𝗹𝗼𝘀𝗲 🗑", callback_data="delete_msg")]
